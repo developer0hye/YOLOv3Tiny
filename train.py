@@ -186,8 +186,8 @@ if __name__ == '__main__':
         
         #multi scale augmentation
         random_scale_factor = random.randint(-3, 6)
-        random_scaled_img_w = img_w + 32 * random_scale_factor
-        random_scaled_img_h = img_h + 32 * random_scale_factor
+        random_scaled_img_w = opt.img_w + 32 * random_scale_factor
+        random_scaled_img_h = opt.img_h + 32 * random_scale_factor
 
         training_set = dataset.YOLODataset(path=opt.dataset_root,
                                         img_w=random_scaled_img_w,
