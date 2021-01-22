@@ -1,0 +1,12 @@
+VOCdataset/
+VOCdataset
+*.pth
+predicted_results/*
+*.bat
+.idea/*
+weights/
+__pycache__/*
+*.pyc
+.vscode/
+runs/
+*.zip
