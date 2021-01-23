@@ -11,7 +11,7 @@ import metric
 
 parser = argparse.ArgumentParser(description='YOLO-v3 tiny Detection')
 
-parser.add_argument('--batch-size', default=1, type=int,
+parser.add_argument('--batch-size', default=32, type=int,
                     help='Batch size for testing')
 
 parser.add_argument('--img-w', default=416, type=int)
@@ -53,7 +53,9 @@ def test(opt, model, device):
                                               opt.batch_size,
                                               num_workers=opt.num_workers,
                                               shuffle=False,
-                                              pin_memory=True)
+                                              collate_fn=dataset.yolo_collate,
+                                              pin_memory=True,
+                                              drop_last=False)
 
     print("----------------------------------------Object Detection--------------------------------------------")
     print("Let's test OD network !")
@@ -95,23 +97,23 @@ def test(opt, model, device):
                     class_tp_fp_score = metric.measure_tpfp(pred_bboxes, target_bboxes, 0.5, bbox_format='cxcywh')
                     class_tp_fp_score_batch.append(class_tp_fp_score)
 
-                    img = cv2.imread(test_dataset.imgs_path[index])
-                    img = augmentation.LetterBoxResize(img,dsize=(416,416))
+                    # img = cv2.imread(test_dataset.imgs_path[index])
+                    # img = augmentation.LetterBoxResize(img,dsize=(opt.img_w, opt.img_h))
 
-                    for pred_bbox in pred_bboxes:
+                    # for pred_bbox in pred_bboxes:
 
-                        pred_bbox = pred_bbox.astype(np.int32)
+                    #     pred_bbox = pred_bbox.astype(np.int32)
 
-                        l = int(pred_bbox[1] - pred_bbox[3] / 2)
-                        r = int(pred_bbox[1] + pred_bbox[3] / 2)
+                    #     l = int(pred_bbox[1] - pred_bbox[3] / 2)
+                    #     r = int(pred_bbox[1] + pred_bbox[3] / 2)
 
-                        t = int(pred_bbox[2] - pred_bbox[4] / 2)
-                        b = int(pred_bbox[2] + pred_bbox[4] / 2)
+                    #     t = int(pred_bbox[2] - pred_bbox[4] / 2)
+                    #     b = int(pred_bbox[2] + pred_bbox[4] / 2)
 
-                        cv2.rectangle(img=img, pt1=(l, t), pt2=(r, b), color=(0, 255, 0))
+                    #     cv2.rectangle(img=img, pt1=(l, t), pt2=(r, b), color=(0, 255, 0))
 
-                    cv2.imshow('img', img)
-                    cv2.waitKey(1)
+                    # cv2.imshow('img', img)
+                    # cv2.waitKey(1)
 
         mean_ap = metric.compute_map(class_tp_fp_score_batch, gt_bboxes_batch, num_classes=model.num_classes)
         print(mean_ap)
