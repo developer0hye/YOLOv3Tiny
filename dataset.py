@@ -82,9 +82,10 @@ class YOLODataset(Dataset):
 
             img, bboxes_xyxy, bboxes_class = augmentation.RandomTranslation(img, bboxes_xyxy, bboxes_class)
             img, bboxes_xyxy, bboxes_class = augmentation.RandomScale(img, bboxes_xyxy, bboxes_class)
-            img = augmentation.ColorJittering(img)
-            #img = augmentation.RandomErasePatches(img, bboxes_xyxy)
 
+            #img = augmentation.RandomErasePatches(img, bboxes_xyxy)
+            img = augmentation.ColorJittering(img)
+            
             bboxes_xywh = augmentation.xyxy2xywh(bboxes_xyxy)
         else:
             img, bboxes_xywh, bboxes_class = augmentation.LetterBoxResize(img, (self.img_w, self.img_h), bboxes_xywh, bboxes_class)

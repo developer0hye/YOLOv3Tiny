@@ -13,12 +13,9 @@ parser = argparse.ArgumentParser(description='YOLO-v3 tiny Detection')
 
 parser.add_argument('--batch-size', default=32, type=int,
                     help='Batch size for testing')
-
 parser.add_argument('--img-w', default=416, type=int)
 parser.add_argument('--img-h', default=416, type=int)
-
 parser.add_argument('--model-json-file', default='yolov3tiny_voc.json', type=str)
-
 parser.add_argument('--weights', type=str, default=None,
                     help='load weights to resume training')
 parser.add_argument('--dataset-root', default="VOCdataset/test",
@@ -29,15 +26,6 @@ parser.add_argument('--num-workers', default=8, type=int,
                     help='Number of workers used in dataloading')
 
 opt = parser.parse_args()
-
-
-def setup_seed(seed):
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    np.random.seed(seed)
-    random.seed(seed)
-    torch.backends.cudnn.deterministic = True
-
 
 def test(opt, model, device):
     if not os.path.exists(opt.save_folder):
@@ -119,6 +107,7 @@ def test(opt, model, device):
         print(mean_ap)
         
 if __name__ == '__main__':
+    torch.backends.cudnn.deterministic = True
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     model = YOLOv3Tiny(model_json_file=opt.model_json_file)
     model = model.to(device)

@@ -344,10 +344,10 @@ if __name__ == '__main__':
     prng = RandomState(21)
 
     while(True):
-        img = cv2.imread("test_example_v2/000021.jpg", cv2.IMREAD_COLOR)
+        img = cv2.imread("test_example/000017.jpg", cv2.IMREAD_COLOR)
 
         import dataset
-        label = dataset.read_annotation_file("test_example_v2/000021.txt")
+        label = dataset.read_annotation_file("test_example/000017.txt")
         classes, bboxes_xywh = label[:, 0:1], label[:, 1:]
 
         bboxes_xyxy = xywh2xyxy(bboxes_xywh)
@@ -355,13 +355,13 @@ if __name__ == '__main__':
         img, bboxes_xyxy, classes = RandomCropPreserveBBoxes(img, bboxes_xyxy, classes)
         
         bboxes_xywh = xyxy2xywh(bboxes_xyxy)
-        #img = cv2.resize(img, (416, 416))
         img, bboxes_xywh, classes = LetterBoxResize(img, (608, 608), bboxes_xywh, classes)
         img, bboxes_xywh = HorFlip(img, bboxes_xywh)
         bboxes_xyxy = xywh2xyxy(bboxes_xywh)
 
         img, bboxes_xyxy, classes = RandomTranslation(img, bboxes_xyxy, classes)
         img, bboxes_xyxy, classes = RandomScale(img, bboxes_xyxy, classes)
+
         img = RandomErasePatches(img, bboxes_xyxy)
         img = ColorJittering(img)
         

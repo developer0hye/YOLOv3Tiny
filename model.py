@@ -121,7 +121,7 @@ class YOLOv3Tiny(nn.Module):
         return f16, f32
 
     def forward(self, x):
-        input_img_h, input_img_w = x.shape[2:]
+        batch_size, _, input_img_h, input_img_w = x.shape
         
         # backbone
         f16, f32 = self.extract_features(x)
@@ -144,7 +144,7 @@ class YOLOv3Tiny(nn.Module):
         all_decoded_bboxes = torch.cat(all_decoded_bboxes, dim=1)#[B, #num_bboxes, 4 + 1 + num_classes]
 
         output = {}
-        output["batch_size"] = x.shape[0]
+        output["batch_size"] = batch_size
         output["model_input_shape"] = (input_img_h, input_img_w)
         output["num_classes"] = self.num_classes
         output["device"] = x.device

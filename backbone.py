@@ -47,12 +47,12 @@ class YOLOv3TinyBackbone(nn.Module):
         self.stage5 = nn.Sequential(nn.MaxPool2d(2), ConvBnLeakyReLU(128, 256))
         self.stage6 = nn.Sequential(nn.MaxPool2d(2), 
                                     ConvBnLeakyReLU(256, 512),
-                                    #nn.ZeroPad2d((0, 1, 0, 1)),
-                                    #nn.MaxPool2d((2, 2), 1)
+                                    nn.ZeroPad2d((0, 1, 0, 1)),
+                                    nn.MaxPool2d((2, 2), 1),
                                     ConvBnLeakyReLU(512, 1024))
-        
+
         self.gap = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(1024, num_classes)
+        self.fc = nn.Conv2d(1024, num_classes, kernel_size=1)
 
     def extract_featrues(self, x):
         feature_pyramid = {}
@@ -74,12 +74,10 @@ class YOLOv3TinyBackbone(nn.Module):
         feature_pyramid = self.extract_featrues(x)
 
         x = self.gap(feature_pyramid["stride 32"])
-        x = x.flatten(start_dim=2)
         x = self.fc(x)
+        x = x.flatten(start_dim=2)
         
         return x
-
-
 
 class DarkNetTiny(nn.Module):
     def __init__(self):
@@ -127,6 +125,12 @@ class DarkNetTiny(nn.Module):
 def darknet_tiny(weight_path=None):
     model = DarkNetTiny()
     if weight_path:
+        state_dict = torch.load(weight_path, map_location='cpu')
+        print(len(state_dict))
+        for key in state_dict:
+            #print(key)
+            print(state_dict[key].shape)
+
         model.load_state_dict(torch.load(weight_path, map_location='cpu'),
                               strict=False)
     return model
@@ -134,6 +138,13 @@ def darknet_tiny(weight_path=None):
 if __name__ == '__main__':
     model_pretrained = darknet_tiny('backbone_weights/darknet_light_90_58.99.pth')
     model_scratch = darknet_tiny()
+
+    model = YOLOv3TinyBackbone()
+    state_dict = model.state_dict()
+    print(len(model.state_dict()))
+    for key in state_dict:
+        #print(key)
+        print(state_dict[key].shape)
 
     rand_tensor = torch.randn((1, 3, 416, 416))
     print(model_pretrained(rand_tensor)[1].sum())
