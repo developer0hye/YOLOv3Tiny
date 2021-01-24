@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import random
+import math
 
 def xywh2xyxy(box_xywh):
     box_xyxy = box_xywh.copy()
@@ -21,13 +22,8 @@ def xyxy2xywh(box_xyxy):
     box_xywh = np.clip(box_xywh, 0., 1.)
     return box_xywh
 
-def calcArea(bboxes_xyxy):
-    w = (bboxes_xyxy[:, 2] - bboxes_xyxy[:, 0])
-    h = (bboxes_xyxy[:, 3] - bboxes_xyxy[:, 1])
-    return w * h
 
 def LetterBoxResize(img, dsize, bboxes=None, class_ids=None):
-    
     original_height, original_width = img.shape[:2]
     target_width, target_height = dsize
 
@@ -75,32 +71,7 @@ def LetterBoxResize(img, dsize, bboxes=None, class_ids=None):
 
         return img, bboxes, class_ids
     return img
-    
-def PhotometricNoise(
-             prng,
-             img_bgr, #type must be float
-             h_delta=18.,
-             s_gain=0.5,
-             brightness_delta=32,
-             ):
-    if prng.randint(2):
-        if prng.randint(2):
-            brightness_delta = prng.uniform(-brightness_delta, brightness_delta)
-            img_bgr += brightness_delta
-            img_bgr = np.clip(img_bgr, 0., 255.)
 
-        img_hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
-
-        # h[0, 359], s[0, 1.0], v[0, 255.]
-        h_delta = prng.uniform(-h_delta, h_delta)
-        s_gain = prng.uniform(1. - s_gain, 1. + s_gain)
-
-        img_hsv[..., 0] = np.clip(img_hsv[..., 0] + h_delta, 0., 359.)
-        img_hsv[..., 1] = np.clip(img_hsv[..., 1] * s_gain, 0., 1.0)
-
-        img_bgr = cv2.cvtColor(img_hsv, cv2.COLOR_HSV2BGR)
-        return img_bgr
-    return img_bgr
 
 def ColorJittering(img, delta_h=15, scale_s=.5, scale_v=.5):
 
@@ -153,7 +124,7 @@ def RandomTranslation(img, bboxes_xyxy, classes, p=1.0):
         return img, bboxes_xyxy, classes
     return img, bboxes_xyxy, classes
 
-def RandomScale(img, bboxes_xyxy, classes, p=1.0):
+def RandomScale(img, bboxes_xyxy, classes, p=1.0, threshold_w=32, threshold_h=32):
 
     if random.random() < p:
         img_h, img_w = img.shape[:2]
@@ -162,9 +133,9 @@ def RandomScale(img, bboxes_xyxy, classes, p=1.0):
         min_bbox_h = np.min(bboxes_xyxy[:, 3] - bboxes_xyxy[:, 1]) * img_h
 
         min_scale = 1.0
-        if min_bbox_w > 32 and min_bbox_h > 32: 
+        if min_bbox_w > threshold_w and min_bbox_h > threshold_h: 
             # 최소 크기가 32보다 크면 크기를 줄이지 않음, 더 줄이면 눈으로도 식별하기 힘들어짐
-            min_scale = np.maximum(32/min_bbox_w, 32/min_bbox_h) #줄어들 수 있는 최소 크기를 32으로 한정
+            min_scale = np.maximum(threshold_w/min_bbox_w, threshold_h/min_bbox_h) #줄어들 수 있는 최소 크기를 32으로 한정
 
         max_bbox_w = np.max(bboxes_xyxy[:, 2] - bboxes_xyxy[:, 0]) * img_w
         max_bbox_h = np.max(bboxes_xyxy[:, 3] - bboxes_xyxy[:, 1]) * img_h
@@ -208,99 +179,6 @@ def RandomScale(img, bboxes_xyxy, classes, p=1.0):
 
     return img, bboxes_xyxy, classes
 
-def RandomErasePatches(img, bboxes_xyxy, occlusion_ratio=0.1, p=1.0):
-    if random.random() < p:
-        img_h, img_w = img.shape[:2]
-        for bbox_xyxy in bboxes_xyxy.copy():
-            l, t, r, b = bbox_xyxy
-
-            l = int(np.round(l * img_w))
-            t = int(np.round(t * img_h))
-            r = int(np.round(r * img_w))
-            b = int(np.round(b * img_h))
-
-            w = int(np.round(r - l))
-            h = int(np.round(b - t))
-
-            area = w * h
-            
-            for _ in range(10):
-                erased_patch_w = random.randint(1, w)
-                erased_patch_h = random.randint(1, h)
-
-                if erased_patch_w * erased_patch_h / area < occlusion_ratio:
-                    erased_patch_l = random.randint(l, r - erased_patch_w)
-                    erased_patch_t = random.randint(t, b - erased_patch_h)
-                    erased_patch_r = erased_patch_l + erased_patch_w
-                    erased_patch_b = erased_patch_t + erased_patch_h
-                    
-                    cropped_img = img[erased_patch_t:erased_patch_b, erased_patch_l:erased_patch_r]
-                    img[erased_patch_t:erased_patch_b, erased_patch_l:erased_patch_r] = cv2.blur(cropped_img, (erased_patch_w, erased_patch_h))
-                    break
-        return img
-    return img
-
-def RandomCrop(img, bboxes_xyxy, classes, p=1.0):
-    if random.random() < p:
-        height, width = img.shape[0:2]
-
-        min_width = width // 4
-        min_height = height // 4
-
-        while (min_width <= width and min_height <= height):
-            clipped_w = random.randint(min_width, width)
-            clipped_h = random.randint(min_height, height)
-
-            l = random.randint(0, width - clipped_w + 1)
-            t = random.randint(0, height - clipped_h + 1)
-            r = l + clipped_w
-            b = t + clipped_h
-
-            w_bboxes = np.round(width * (bboxes_xyxy[:, 2] - bboxes_xyxy[:, 0])).astype(np.int32)
-            h_bboxes = np.round(height * (bboxes_xyxy[:, 3] - bboxes_xyxy[:, 1])).astype(np.int32)
-
-            l_clipped_bboxes = np.round(np.clip(width * bboxes_xyxy[:, 0], a_min=l, a_max=r)).astype(np.int32)
-            t_clipped_bboxes = np.round(np.clip(height * bboxes_xyxy[:, 1], a_min=t, a_max=b)).astype(np.int32)
-            r_clipped_bboxes = np.round(np.clip(width * bboxes_xyxy[:, 2], a_min=l, a_max=r)).astype(np.int32)
-            b_clipped_bboxes = np.round(np.clip(height * bboxes_xyxy[:, 3], a_min=t, a_max=b)).astype(np.int32)
-
-            w_clipped_bboxes = r_clipped_bboxes - l_clipped_bboxes
-            h_clipped_bboxes = b_clipped_bboxes - t_clipped_bboxes
-
-            inner_bboxes = ((w_clipped_bboxes * h_clipped_bboxes) > 0)
-
-            #0인건 일단 제거
-            if not(True in inner_bboxes):
-                min_width = clipped_w + 1
-                min_height = clipped_h + 1
-                continue
-
-            w_bboxes = w_bboxes[inner_bboxes]
-            h_bboxes = h_bboxes[inner_bboxes]
-
-            w_clipped_bboxes = w_clipped_bboxes[inner_bboxes]
-            h_clipped_bboxes = h_clipped_bboxes[inner_bboxes]
-
-            if np.min(((w_clipped_bboxes * h_clipped_bboxes) / (w_bboxes * h_bboxes))) < 0.75:
-                min_width = clipped_w + 1
-                min_height = clipped_h + 1
-                continue
-
-            l_clipped_bboxes = ((l_clipped_bboxes[inner_bboxes, np.newaxis]-l)/clipped_w)
-            t_clipped_bboxes = ((t_clipped_bboxes[inner_bboxes, np.newaxis]-t)/clipped_h)
-            r_clipped_bboxes = ((r_clipped_bboxes[inner_bboxes, np.newaxis]-l)/clipped_w)
-            b_clipped_bboxes = ((b_clipped_bboxes[inner_bboxes, np.newaxis]-t)/clipped_h)
-
-            classes = classes[inner_bboxes]
-
-            augmented_bboxes_xyxy = np.concatenate([l_clipped_bboxes, t_clipped_bboxes,
-                                                    r_clipped_bboxes, b_clipped_bboxes], axis=-1).astype(np.float32)
-
-            augmented_bboxes_xyxy = np.clip(augmented_bboxes_xyxy, a_min=0., a_max=1.0)
-            augmented_img = img[t:b, l:r]
-            return augmented_img, augmented_bboxes_xyxy, classes
-    return img, bboxes_xyxy, classes
-
 def RandomCropPreserveBBoxes(img, bboxes_xyxy, classes, p=1.0):
     if random.random() < p:
         height, width = img.shape[0:2]
@@ -316,19 +194,18 @@ def RandomCropPreserveBBoxes(img, bboxes_xyxy, classes, p=1.0):
         r = random.randint(outer_r_bboxes, width)
         b = random.randint(outer_b_bboxes, height)
 
-        cropped_img = img[t:b, l:r]
+        img = img[t:b, l:r]
 
-        cropped_bboxes = bboxes_xyxy.copy()
-        cropped_bboxes[:, [0, 2]] *= width
-        cropped_bboxes[:, [1, 3]] *= height
+        bboxes_xyxy[:, [0, 2]] *= width
+        bboxes_xyxy[:, [1, 3]] *= height
 
-        cropped_bboxes[:, [0, 2]] -= l
-        cropped_bboxes[:, [1, 3]] -= t
+        bboxes_xyxy[:, [0, 2]] -= l
+        bboxes_xyxy[:, [1, 3]] -= t
 
-        cropped_bboxes[:, [0, 2]] /= (r-l)
-        cropped_bboxes[:, [1, 3]] /= (b-t)
+        bboxes_xyxy[:, [0, 2]] /= (r-l)
+        bboxes_xyxy[:, [1, 3]] /= (b-t)
 
-        return cropped_img, cropped_bboxes, classes
+        return img, bboxes_xyxy, classes
     return img, bboxes_xyxy, classes
 
 def drawBBox(img, bboxes_xyxy):
@@ -343,6 +220,7 @@ def drawBBox(img, bboxes_xyxy):
                       (int(bbox_xyxy[0]), int(bbox_xyxy[1])),
                       (int(bbox_xyxy[2]), int(bbox_xyxy[3])),
                       (0, 255, 0),2)
+
 
 if __name__ == '__main__':
     from numpy.random import RandomState
@@ -364,13 +242,13 @@ if __name__ == '__main__':
         img, bboxes_xywh = HorFlip(img, bboxes_xywh)
         bboxes_xyxy = xywh2xyxy(bboxes_xywh)
 
+        #img, _ = random_perspective(img, np.concatenate([classes, bboxes_xyxy], axis=1), scale=.1, shear=0, degrees=0)
+
         img, bboxes_xyxy, classes = RandomTranslation(img, bboxes_xyxy, classes)
         img, bboxes_xyxy, classes = RandomScale(img, bboxes_xyxy, classes)
 
-        img = RandomErasePatches(img, bboxes_xyxy)
         img = ColorJittering(img)
         
-
         if len(bboxes_xyxy) != len(classes):
             print("bbox랑 class 수랑 일치하지 않다. augmentation 과정에서 실수가 있는 게 분명해")
 

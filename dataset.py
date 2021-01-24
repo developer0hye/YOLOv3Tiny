@@ -82,8 +82,6 @@ class YOLODataset(Dataset):
 
             img, bboxes_xyxy, bboxes_class = augmentation.RandomTranslation(img, bboxes_xyxy, bboxes_class)
             img, bboxes_xyxy, bboxes_class = augmentation.RandomScale(img, bboxes_xyxy, bboxes_class)
-
-            img = augmentation.RandomErasePatches(img, bboxes_xyxy)
             img = augmentation.ColorJittering(img)
             
             bboxes_xywh = augmentation.xyxy2xywh(bboxes_xyxy)
@@ -98,10 +96,6 @@ class YOLODataset(Dataset):
         # cv2.waitKey(0)
 
         bboxes_class = torch.from_numpy(bboxes_class)
-
-        bboxes_xywh[:, [0, 2]] *= self.img_w
-        bboxes_xywh[:, [1, 3]] *= self.img_h
-
         bboxes_xywh = torch.from_numpy(bboxes_xywh)
 
         bboxes = torch.cat([bboxes_class, bboxes_xywh], dim=-1)
@@ -128,12 +122,3 @@ def yolo_collate(batch_data):
 
     batch_img = torch.stack(batch_img, 0)
     return batch_img, batch_bboxes, batch_idx
-
-if __name__ == '__main__':
-    training_set = YOLODataset(path="test_example_v2",
-                                    img_size=(416, 416),
-                                    seed=10, 
-                                    use_augmentation=True)
-    
-    for data in training_set:
-        pass

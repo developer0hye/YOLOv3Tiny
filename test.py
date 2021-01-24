@@ -75,6 +75,9 @@ def test(opt, model, device):
             
             for pred_bboxes, target_bboxes, index in zip(filtered_batch_multi_scale_bboxes, batch_target_bboxes, inds):
                 target_bboxes = target_bboxes.cpu().numpy()
+                target_bboxes[:, [1, 3]] *= opt.img_w
+                target_bboxes[:, [2, 4]] *= opt.img_h
+
                 gt_bboxes_batch.append(target_bboxes)
 
                 if len(pred_bboxes) > 0:
