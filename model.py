@@ -324,8 +324,12 @@ def yololoss(pred, target, ignore_thresh=0.7):
         
         for yolo_layer_output_shape in pred["yolo_layers_output_shape"]:
             target_encoded_bboxes.append(torch.zeros(yolo_layer_output_shape).to(device))
-        
-        for target_bbox in target[idx_batch]:
+
+        target_bboxes = target[idx_batch]
+        target_bboxes[:, [1, 3]] *= input_img_w
+        target_bboxes[:, [2, 4]] *= input_img_h
+
+        for target_bbox in target_bboxes:
         
             target_bbox = target_bbox.clone().view(1, 5) # to compute iou with vectorization
             
@@ -379,7 +383,6 @@ def yololoss(pred, target, ignore_thresh=0.7):
             matched_target_enocded_bboxes[4, grid_tl_y, grid_tl_x] = 1
             matched_target_enocded_bboxes[5 + c, grid_tl_y, grid_tl_x] = 1
             
-
         # flatten features
         flatten_pred_encoded_bboxes = pred["encoded_bboxes"][idx_batch]
         flatten_pred_decoded_bboxes = pred["decoded_bboxes"][idx_batch]
@@ -406,7 +409,7 @@ def yololoss(pred, target, ignore_thresh=0.7):
         loss_foreground_objectness.append(bce_with_logits_loss(flatten_pred_encoded_bboxes[foreground_mask][:, 4], flatten_target_encoded_bboxes[foreground_mask][:, 4]))
         
         # print("bf ignore: ", torch.sum(background_mask))
-        for target_bbox in target[idx_batch].to(device):
+        for target_bbox in target_bboxes.to(device):
             target_bbox = target_bbox.view(1, 5)
             target_class = target_bbox[0, 0]
 

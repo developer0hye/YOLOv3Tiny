@@ -5,7 +5,8 @@ import argparse
 
 import torch
 import torch.optim as optim
-import torch.utils.data as data
+import torch.utils.data as torchdata
+import torch.nn.functional as F
 
 from torch.cuda.amp import *
 #from torch.utils.tensorboard import SummaryWriter
@@ -17,6 +18,7 @@ import tools
 import dataset
 
 
+
 def setup_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
@@ -25,20 +27,26 @@ def setup_seed(seed):
     torch.backends.cudnn.benchmark = False
     np.random.seed(seed)
     random.seed(seed)
-    
+
+   
 def train(model, optimizer, scaler, data_loader, device, epoch, total_iteration, opt):
-    
     model.train()
 
     torch.cuda.synchronize()
     t1 = time.time()
+
+    img_w = opt.img_w
+    img_h = opt.img_h
+
     for i, (img, target, _) in enumerate(data_loader):
         optimizer.zero_grad()
-        
         with torch.cuda.amp.autocast():
             img = img.to(device)
+            img = F.interpolate(img, 
+                                size=(img_h, img_w),
+                                mode='bilinear',
+                                align_corners=True)
             pred = model(img)
-
             loss = yololoss(pred, target)
 
         scaler.scale(loss).backward()
@@ -57,7 +65,13 @@ def train(model, optimizer, scaler, data_loader, device, epoch, total_iteration,
             print("time per 100 iter(sec): ", t2 - t1)
             print("img_size: ", img.shape)
             t1 = time.time()
-            
+        
+        if i % 10 == 0: #for multiscale
+            random_scale_factor = random.randint(-opt.min_random_scale_factor, opt.max_random_scale_factor)
+            img_w = opt.img_w + 32 * random_scale_factor
+            img_h = opt.img_h + 32 * random_scale_factor
+            print("img_size: ", img_w, img_h)
+
 if __name__ == '__main__':
     
     parser = argparse.ArgumentParser(description='YOLO-v3 tiny Detection')
@@ -66,6 +80,9 @@ if __name__ == '__main__':
 
     parser.add_argument('--img-w', default=416, type=int)
     parser.add_argument('--img-h', default=416, type=int)
+
+    parser.add_argument('--min-random-scale-factor', default=-3, type=int)
+    parser.add_argument('--max-random-scale-factor', default=6, type=int)
 
     parser.add_argument('--model-json-file', default='yolov3tiny_voc.json', type=str)
     parser.add_argument('--num-classes', default=20, type=int)
@@ -96,8 +113,8 @@ if __name__ == '__main__':
         os.mkdir(opt.save_folder)
     
     training_set = dataset.YOLODataset(path=opt.dataset_root,
-                                    img_w=opt.img_w,
-                                    img_h=opt.img_h,
+                                    img_w=opt.img_w + 32 * opt.max_random_scale_factor,
+                                    img_h=opt.img_h + 32 * opt.max_random_scale_factor,
                                     seed=opt.seed, 
                                     use_augmentation=True)
 
@@ -105,7 +122,7 @@ if __name__ == '__main__':
     print("#Training set images: ", num_training_set_images)
     assert num_training_set_images > 0, "cannot load dataset, check root dir"
 
-    training_set_loader = data.DataLoader(training_set, opt.batch_size,
+    training_set_loader = torchdata.DataLoader(training_set, opt.batch_size,
                                   num_workers=opt.num_workers,
                                   shuffle=True,
                                   collate_fn=dataset.yolo_collate,
@@ -125,7 +142,8 @@ if __name__ == '__main__':
                         momentum=opt.momentum,
                         weight_decay=opt.weight_decay)
     
-    total_iteration = (num_training_set_images // opt.batch_size) * opt.total_epoch
+    iterations_per_epoch = num_training_set_images // opt.batch_size 
+    total_iteration = iterations_per_epoch * opt.total_epoch
 
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=opt.total_epoch)
 
@@ -183,21 +201,3 @@ if __name__ == '__main__':
         }
         
         torch.save(checkpoint, os.path.join(opt.save_folder, 'epoch' + str(epoch + 1) + '.pth'))
-        
-        #multi scale augmentation
-        random_scale_factor = random.randint(-3, 6)
-        random_scaled_img_w = opt.img_w + 32 * random_scale_factor
-        random_scaled_img_h = opt.img_h + 32 * random_scale_factor
-
-        training_set = dataset.YOLODataset(path=opt.dataset_root,
-                                        img_w=random_scaled_img_w,
-                                        img_h=random_scaled_img_h,
-                                        seed=opt.seed, 
-                                        use_augmentation=True)
-
-        training_set_loader = data.DataLoader(training_set, opt.batch_size,
-                                    num_workers=opt.num_workers,
-                                    shuffle=True,
-                                    collate_fn=dataset.yolo_collate,
-                                    pin_memory=True,
-                                    drop_last=True)
