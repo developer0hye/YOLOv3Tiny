@@ -126,10 +126,10 @@ def darknet_tiny(weight_path=None):
     model = DarkNetTiny()
     if weight_path:
         state_dict = torch.load(weight_path, map_location='cpu')
-        print(len(state_dict))
-        for key in state_dict:
-            #print(key)
-            print(state_dict[key].shape)
+        # print(len(state_dict))
+        # for key in state_dict:
+        #     #print(key)
+        #     print(state_dict[key].shape)
 
         model.load_state_dict(torch.load(weight_path, map_location='cpu'),
                               strict=False)

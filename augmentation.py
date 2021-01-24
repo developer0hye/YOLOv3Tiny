@@ -208,7 +208,7 @@ def RandomScale(img, bboxes_xyxy, classes, p=1.0):
 
     return img, bboxes_xyxy, classes
 
-def RandomErasePatches(img, bboxes_xyxy, occlusion_ratio=0.25, p=1.0):
+def RandomErasePatches(img, bboxes_xyxy, occlusion_ratio=0.1, p=1.0):
     if random.random() < p:
         img_h, img_w = img.shape[:2]
         for bbox_xyxy in bboxes_xyxy.copy():
@@ -219,19 +219,24 @@ def RandomErasePatches(img, bboxes_xyxy, occlusion_ratio=0.25, p=1.0):
             r = int(np.round(r * img_w))
             b = int(np.round(b * img_h))
 
-            erased_patch_w = int(np.round((r - l) * occlusion_ratio))
-            erased_patch_h = int(np.round((b - t) * occlusion_ratio))
+            w = int(np.round(r - l))
+            h = int(np.round(b - t))
 
-            if erased_patch_w == 0 or erased_patch_h == 0:
-                continue
+            area = w * h
             
-            erased_patch_l = random.randint(l, r - erased_patch_w)
-            erased_patch_t = random.randint(t, b - erased_patch_h)
-            erased_patch_r = erased_patch_l + erased_patch_w
-            erased_patch_b = erased_patch_t + erased_patch_h
+            for _ in range(10):
+                erased_patch_w = random.randint(1, w)
+                erased_patch_h = random.randint(1, h)
 
-            img[erased_patch_t:erased_patch_b, erased_patch_l:erased_patch_r] = 127
-            
+                if erased_patch_w * erased_patch_h / area < occlusion_ratio:
+                    erased_patch_l = random.randint(l, r - erased_patch_w)
+                    erased_patch_t = random.randint(t, b - erased_patch_h)
+                    erased_patch_r = erased_patch_l + erased_patch_w
+                    erased_patch_b = erased_patch_t + erased_patch_h
+                    
+                    cropped_img = img[erased_patch_t:erased_patch_b, erased_patch_l:erased_patch_r]
+                    img[erased_patch_t:erased_patch_b, erased_patch_l:erased_patch_r] = cv2.blur(cropped_img, (erased_patch_w, erased_patch_h))
+                    break
         return img
     return img
 

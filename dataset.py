@@ -83,7 +83,7 @@ class YOLODataset(Dataset):
             img, bboxes_xyxy, bboxes_class = augmentation.RandomTranslation(img, bboxes_xyxy, bboxes_class)
             img, bboxes_xyxy, bboxes_class = augmentation.RandomScale(img, bboxes_xyxy, bboxes_class)
 
-            #img = augmentation.RandomErasePatches(img, bboxes_xyxy)
+            img = augmentation.RandomErasePatches(img, bboxes_xyxy)
             img = augmentation.ColorJittering(img)
             
             bboxes_xywh = augmentation.xyxy2xywh(bboxes_xyxy)
