@@ -539,7 +539,7 @@ if __name__ == '__main__':
 
             batch_multi_scale_bboxes = model(img.cuda())
 
-            filtered_batch_multi_scale_bboxes = bboxes_filtering(batch_multi_scale_bboxes)
+            filtered_batch_multi_scale_bboxes = bboxes_filtering(batch_multi_scale_bboxes, 0.25)
             filtered_single_multi_scale_bboxes = filtered_batch_multi_scale_bboxes[0]
             print(filtered_single_multi_scale_bboxes)
             img_draw = cv2.imread("test_example/000017.jpg")
