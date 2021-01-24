@@ -70,7 +70,6 @@ def train(model, optimizer, scaler, data_loader, device, epoch, total_iteration,
             random_scale_factor = random.randint(-opt.min_random_scale_factor, opt.max_random_scale_factor)
             img_w = opt.img_w + 32 * random_scale_factor
             img_h = opt.img_h + 32 * random_scale_factor
-            print("img_size: ", img_w, img_h)
 
 if __name__ == '__main__':
     
