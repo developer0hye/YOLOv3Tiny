@@ -14,9 +14,7 @@ import numpy as np
 
 #custom packages
 from model import *
-import tools
 import dataset
-
 
 
 def setup_seed(seed):
