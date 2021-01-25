@@ -70,23 +70,31 @@ class YOLODataset(Dataset):
         bboxes_class = label[:, 0].astype(np.long).reshape(-1, 1)
         bboxes_xywh = label[:, 1:].reshape(-1, 4)
 
+        img, bboxes_xywh, bboxes_class = augmentation.LetterBoxResize(img, (self.img_w, self.img_h), bboxes_xywh, bboxes_class)
         if self.use_augmentation:
-            bboxes_xyxy = augmentation.xywh2xyxy(bboxes_xywh)
+            # bboxes_xyxy = augmentation.xywh2xyxy(bboxes_xywh)
 
-            img, bboxes_xyxy, bboxes_class = augmentation.RandomCropPreserveBBoxes(img, bboxes_xyxy, bboxes_class)
+            # img, bboxes_xyxy, bboxes_class = augmentation.RandomCropPreserveBBoxes(img, bboxes_xyxy, bboxes_class)
 
-            bboxes_xywh = augmentation.xyxy2xywh(bboxes_xyxy)
-            img, bboxes_xywh, bboxes_class = augmentation.LetterBoxResize(img, (self.img_w, self.img_h), bboxes_xywh, bboxes_class)
+            # bboxes_xywh = augmentation.xyxy2xywh(bboxes_xyxy)
+            # img, bboxes_xywh, bboxes_class = augmentation.LetterBoxResize(img, (self.img_w, self.img_h), bboxes_xywh, bboxes_class)
+            # img, bboxes_xywh = augmentation.HorFlip(img, bboxes_xywh)
+            # bboxes_xyxy = augmentation.xywh2xyxy(bboxes_xywh)
+
+            # img, bboxes_xyxy, bboxes_class = augmentation.RandomTranslation(img, bboxes_xyxy, bboxes_class)
+            # img, bboxes_xyxy, bboxes_class = augmentation.RandomScale(img, bboxes_xyxy, bboxes_class)
+            # img = augmentation.ColorJittering(img)
+            
             img, bboxes_xywh = augmentation.HorFlip(img, bboxes_xywh)
             bboxes_xyxy = augmentation.xywh2xyxy(bboxes_xywh)
-
+            
+            img, bboxes_xyxy, bboxes_class = augmentation.RandomCrop(img, bboxes_xyxy, bboxes_class)
             img, bboxes_xyxy, bboxes_class = augmentation.RandomTranslation(img, bboxes_xyxy, bboxes_class)
             img, bboxes_xyxy, bboxes_class = augmentation.RandomScale(img, bboxes_xyxy, bboxes_class)
+
             img = augmentation.ColorJittering(img)
-            
+
             bboxes_xywh = augmentation.xyxy2xywh(bboxes_xyxy)
-        else:
-            img, bboxes_xywh, bboxes_class = augmentation.LetterBoxResize(img, (self.img_w, self.img_h), bboxes_xywh, bboxes_class)
         
         bboxes_xyxy = augmentation.xywh2xyxy(bboxes_xywh)
 

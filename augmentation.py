@@ -221,6 +221,64 @@ def drawBBox(img, bboxes_xyxy):
                       (int(bbox_xyxy[2]), int(bbox_xyxy[3])),
                       (0, 255, 0),2)
 
+def RandomCrop(img, bboxes_xyxy, classes, w_constraint=2, h_constraint=2, iou_constraint=0.55, p=1.0):
+    if random.random() < p:
+        img_h, img_w = img.shape[0:2]
+
+        bboxes_w = (bboxes_xyxy[:, 2] - bboxes_xyxy[:, 0])*img_w
+        bboxes_h = (bboxes_xyxy[:, 3] - bboxes_xyxy[:, 1])*img_h
+        bboxes_area = bboxes_w * bboxes_h
+
+        min_cropped_img_w = 0
+        min_cropped_img_h = 0
+        
+        for _ in range(10):
+            cropped_img_w = random.randint(min_cropped_img_w, img_w)
+            cropped_img_h = random.randint(min_cropped_img_h, img_h)
+
+            l = random.randint(0, img_w - cropped_img_w)
+            t = random.randint(0, img_h - cropped_img_h)
+            r = l + cropped_img_w
+            b = t + cropped_img_h
+
+            cropped_bboxes_xyxy = bboxes_xyxy.copy()
+
+            cropped_bboxes_xyxy[:, [0, 2]] *= img_w
+            cropped_bboxes_xyxy[:, [1, 3]] *= img_h
+
+            cropped_bboxes_xyxy[:, [0, 2]] = np.clip(cropped_bboxes_xyxy[:, [0, 2]], l, r)
+            cropped_bboxes_xyxy[:, [1, 3]] = np.clip(cropped_bboxes_xyxy[:, [1, 3]], t, b)
+
+            cropped_bboxes_xyxy = cropped_bboxes_xyxy.astype(int)
+
+            cropped_bboxes_w = cropped_bboxes_xyxy[:, 2] - cropped_bboxes_xyxy[:, 0] 
+            cropped_bboxes_h = cropped_bboxes_xyxy[:, 3] - cropped_bboxes_xyxy[:, 1]
+            cropped_bboxes_area = cropped_bboxes_w * cropped_bboxes_h
+
+            valid_objects = (cropped_bboxes_w > w_constraint) & (cropped_bboxes_h > h_constraint)
+            if np.count_nonzero(valid_objects) == 0:
+                continue
+            
+            cropped_bboxes_area = cropped_bboxes_area[valid_objects]
+            cropped_bboxes_xyxy = cropped_bboxes_xyxy[valid_objects]
+
+            iou = cropped_bboxes_area/bboxes_area[valid_objects]
+            if np.count_nonzero(iou < iou_constraint) > 0: #55퍼센트 이상 가려진 물체가 있으면 다시 Crop
+                continue
+            
+            mask = np.zeros((img_h, img_w), dtype=np.uint8)
+            mask[t:b, l:r] = 1
+            img[mask == 0] = 127
+            
+            cropped_bboxes_xyxy = cropped_bboxes_xyxy.astype(np.float32)
+            cropped_bboxes_xyxy[:, [0, 2]] /= img_w
+            cropped_bboxes_xyxy[:, [1, 3]] /= img_h
+            
+            classes = classes[valid_objects]
+
+            return img, cropped_bboxes_xyxy, classes
+    return img, bboxes_xyxy, classes
+
 
 if __name__ == '__main__':
     from numpy.random import RandomState
@@ -233,17 +291,17 @@ if __name__ == '__main__':
         label = dataset.read_annotation_file("test_example/000017.txt")
         classes, bboxes_xywh = label[:, 0:1], label[:, 1:]
 
-        bboxes_xyxy = xywh2xyxy(bboxes_xywh)
+        # bboxes_xyxy = xywh2xyxy(bboxes_xywh)
 
-        img, bboxes_xyxy, classes = RandomCropPreserveBBoxes(img, bboxes_xyxy, classes)
+        # img, bboxes_xyxy, classes = RandomCrop(img, bboxes_xyxy, classes)
+        #img, bboxes_xyxy, classes = RandomCropPreserveBBoxes(img, bboxes_xyxy, classes)
         
-        bboxes_xywh = xyxy2xywh(bboxes_xyxy)
+        # bboxes_xywh = xyxy2xywh(bboxes_xyxy)
         img, bboxes_xywh, classes = LetterBoxResize(img, (608, 608), bboxes_xywh, classes)
         img, bboxes_xywh = HorFlip(img, bboxes_xywh)
         bboxes_xyxy = xywh2xyxy(bboxes_xywh)
-
-        #img, _ = random_perspective(img, np.concatenate([classes, bboxes_xyxy], axis=1), scale=.1, shear=0, degrees=0)
-
+        
+        img, bboxes_xyxy, classes = RandomCrop(img, bboxes_xyxy, classes)
         img, bboxes_xyxy, classes = RandomTranslation(img, bboxes_xyxy, classes)
         img, bboxes_xyxy, classes = RandomScale(img, bboxes_xyxy, classes)
 
