@@ -229,8 +229,8 @@ def RandomCrop(img, bboxes_xyxy, classes, w_constraint=2, h_constraint=2, iou_co
         bboxes_h = (bboxes_xyxy[:, 3] - bboxes_xyxy[:, 1])*img_h
         bboxes_area = bboxes_w * bboxes_h
 
-        min_cropped_img_w = 0
-        min_cropped_img_h = 0
+        min_cropped_img_w = int(np.round(np.min(bboxes_w)))
+        min_cropped_img_h = int(np.round(np.min(bboxes_h)))
         
         for _ in range(10):
             cropped_img_w = random.randint(min_cropped_img_w, img_w)
@@ -263,7 +263,7 @@ def RandomCrop(img, bboxes_xyxy, classes, w_constraint=2, h_constraint=2, iou_co
             cropped_bboxes_xyxy = cropped_bboxes_xyxy[valid_objects]
 
             iou = cropped_bboxes_area/bboxes_area[valid_objects]
-            if np.count_nonzero(iou < iou_constraint) > 0: #55퍼센트 이상 가려진 물체가 있으면 다시 Crop
+            if np.count_nonzero(iou < iou_constraint) > 0: #iou_constraint 퍼센트 이상 가려진 물체가 있으면 다시 RandomCrop, 너무 많이 Crop된걸 찾도록 학습시키면 상식적으로 이상혀~ 비주얼라이제이션 해보면 알음
                 continue
             
             mask = np.zeros((img_h, img_w), dtype=np.uint8)
