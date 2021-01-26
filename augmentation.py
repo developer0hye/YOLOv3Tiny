@@ -134,7 +134,7 @@ def RandomScale(img, bboxes_xyxy, classes, p=1.0, threshold_w=32, threshold_h=32
 
         min_scale = 1.0
         if min_bbox_w > threshold_w and min_bbox_h > threshold_h: 
-            # 최소 크기가 32보다 크면 크기를 줄이지 않음, 더 줄이면 눈으로도 식별하기 힘들어짐
+            # 최소 크기가 threshold_w, threshold_h 보다 크면 크기를 줄이지 않음, 더 줄이면 눈으로도 식별하기 힘들어짐
             min_scale = np.maximum(threshold_w/min_bbox_w, threshold_h/min_bbox_h) #줄어들 수 있는 최소 크기를 32으로 한정
 
         max_bbox_w = np.max(bboxes_xyxy[:, 2] - bboxes_xyxy[:, 0]) * img_w
