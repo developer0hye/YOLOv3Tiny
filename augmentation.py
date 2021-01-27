@@ -231,7 +231,7 @@ def RandomCrop(img, bboxes_xyxy, classes, w_constraint=2, h_constraint=2, iou_co
 
         min_cropped_img_w = 0
         min_cropped_img_h = 0
-        
+
         for _ in range(10):
             cropped_img_w = random.randint(min_cropped_img_w, img_w)
             cropped_img_h = random.randint(min_cropped_img_h, img_h)
