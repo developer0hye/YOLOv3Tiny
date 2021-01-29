@@ -24,20 +24,6 @@ def load_dataset(root):
             
     return imgs_path, labels_path
 
-def read_annotation_file(path):
-    with open(path, 'r') as label:
-        objects_information = []
-        for line in label:
-            line = line.split()
-            if len(line) == 5:  # 0: class, 1:x, 2:y, 3:w, 4:h
-                object_information = []
-                for data in line:
-                    object_information.append(float(data))
-                objects_information.append(object_information)
-        objects_information = np.asarray(objects_information).astype(np.float32)
-        return objects_information
-
-
 class YOLODataset(Dataset):
     def __init__(self,
                  path,
@@ -50,6 +36,10 @@ class YOLODataset(Dataset):
         self.labels = [np.loadtxt(label_path,
                                   dtype=np.float32,
                                   delimiter=' ').reshape(-1, 5)  for label_path in self.labels_path]
+
+        # self.labels = np.concatenate(self.labels, axis=0)
+        # classes = self.labels[:, 0].astype(int)
+        # unique, counts = np.unique(classes, return_counts=True)
 
         self.img_w = img_w
         self.img_h = img_h
