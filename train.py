@@ -92,8 +92,8 @@ def train(model, optimizer, scaler, data_loader, device, epoch, total_iteration,
     torch.cuda.synchronize()
     t1 = time.time()
 
-    # img_w = opt.img_w
-    # img_h = opt.img_h
+    img_w = opt.img_w
+    img_h = opt.img_h
 
     for i, batch_data in enumerate(data_loader):
         batch_img = batch_data["img"]
@@ -103,10 +103,10 @@ def train(model, optimizer, scaler, data_loader, device, epoch, total_iteration,
         optimizer.zero_grad()
         with torch.cuda.amp.autocast():
             batch_img = batch_img.to(device)
-            # batch_img = F.interpolate(batch_img, 
-            #                     size=(img_h, img_w),
-            #                     mode='bilinear',
-            #                     align_corners=True)
+            batch_img = F.interpolate(batch_img, 
+                                size=(img_h, img_w),
+                                mode='bilinear',
+                                align_corners=True)
             pred = model(batch_img)
             loss = yololoss(pred, batch_target, batch_valid)
 
@@ -114,7 +114,7 @@ def train(model, optimizer, scaler, data_loader, device, epoch, total_iteration,
         scaler.step(optimizer)
         scaler.update()
         
-        if i % 100 == 0:
+        if i % 10 == 0:
             torch.cuda.synchronize()
             t2 = time.time()
             
@@ -127,10 +127,10 @@ def train(model, optimizer, scaler, data_loader, device, epoch, total_iteration,
             print("batch_img_size: ", batch_img.shape)
             t1 = time.time()
         
-        # if i % 10 == 0: #for multiscale
-        #     random_scale_factor = random.randint(-opt.min_random_scale_factor, opt.max_random_scale_factor)
-        #     img_w = opt.img_w + 32 * random_scale_factor
-        #     img_h = opt.img_h + 32 * random_scale_factor
+        if i % 10 == 0: #for multiscale
+            random_scale_factor = random.randint(opt.min_random_scale_factor, opt.max_random_scale_factor)
+            img_w = opt.img_w + 32 * random_scale_factor
+            img_h = opt.img_h + 32 * random_scale_factor
 
 if __name__ == '__main__':
     
@@ -248,24 +248,3 @@ if __name__ == '__main__':
         }
         
         torch.save(checkpoint, os.path.join(opt.save_folder, 'epoch' + str(epoch + 1) + '.pth'))
-
-        random_scale_factor = random.randint(-opt.min_random_scale_factor, opt.max_random_scale_factor)
-        img_w = opt.img_w + 32 * random_scale_factor
-        img_h = opt.img_h + 32 * random_scale_factor
-
-        training_set = dataset.YOLODataset(path=opt.dataset_root,
-                                img_w=img_w,
-                                img_h=img_h,
-                                use_augmentation=True)
-
-        num_training_set_images = len(training_set)
-        print("#Training set images: ", num_training_set_images)
-        assert num_training_set_images > 0, "cannot load dataset, check root dir"
-
-        training_set_loader = torchdata.DataLoader(training_set, opt.batch_size,
-                                    num_workers=opt.num_workers,
-                                    shuffle=True,
-                                    collate_fn=dataset.yolo_collate,
-                                    pin_memory=True,
-                                    drop_last=True)
-
