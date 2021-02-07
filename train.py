@@ -21,10 +21,69 @@ def setup_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed) # if use multi-GPU
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = False
+    torch.backends.cudnn.benchmark = True
     np.random.seed(seed)
     random.seed(seed)
+
+def warmup(model, warmup_epoch, device, opt):
+    scaler = GradScaler()
+
+    optimizer = optim.SGD(model.parameters(),
+                        lr=0.,
+                        momentum=opt.momentum,
+                        weight_decay=0.)
+
+    training_set = dataset.YOLODataset(path=opt.dataset_root,
+                                    img_w=opt.img_w,
+                                    img_h=opt.img_h,
+                                    use_augmentation=True)
+
+    training_set_loader = torchdata.DataLoader(training_set, opt.batch_size,
+                                  num_workers=opt.num_workers,
+                                  shuffle=True,
+                                  collate_fn=dataset.yolo_collate,
+                                  pin_memory=True,
+                                  drop_last=True)
+
+    torch.cuda.synchronize()
+    t1 = time.time()
+
+    warmup_iteration = (len(training_set) // opt.batch_size) * warmup_epoch
+    iteration = 0
+    for epoch in range(warmup_epoch):
+        for i, batch_data in enumerate(training_set_loader):
+            batch_img = batch_data["img"]
+            batch_target = batch_data["bboxes"]
+            batch_valid = batch_data["valid"]
+
+            iteration += 1
+            warmup_lr = opt.lr * float(iteration) / warmup_iteration
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = warmup_lr
+
+            optimizer.zero_grad()
+            with torch.cuda.amp.autocast():
+                batch_img = batch_img.to(device)
+                pred = model(batch_img)
+                loss = yololoss(pred, batch_target, batch_valid)
+
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            
+            if i % 100 == 0:
+                torch.cuda.synchronize()
+                t2 = time.time()
+
+                print('loss: ', loss)
+                print(f'Epoch[{epoch + 1} / {warmup_epoch}]' + ' || iter[%d / %d] ' % (
+                i, total_iteration) + \
+                    ' || Loss: %.4f ||' % (loss.item()) + ' || lr: %.8f ||' % (
+                    optimizer.param_groups[0]['lr']) , end=' ')
+                print("time per 100 iter(sec): ", t2 - t1)
+                print("batch_img_size: ", batch_img.shape)
+                t1 = time.time()
 
    
 def train(model, optimizer, scaler, data_loader, device, epoch, total_iteration, opt):
@@ -33,19 +92,23 @@ def train(model, optimizer, scaler, data_loader, device, epoch, total_iteration,
     torch.cuda.synchronize()
     t1 = time.time()
 
-    img_w = opt.img_w
-    img_h = opt.img_h
+    # img_w = opt.img_w
+    # img_h = opt.img_h
 
-    for i, (img, target, _) in enumerate(data_loader):
+    for i, batch_data in enumerate(data_loader):
+        batch_img = batch_data["img"]
+        batch_target = batch_data["bboxes"]
+        batch_valid = batch_data["valid"]
+
         optimizer.zero_grad()
         with torch.cuda.amp.autocast():
-            img = img.to(device)
-            img = F.interpolate(img, 
-                                size=(img_h, img_w),
-                                mode='bilinear',
-                                align_corners=True)
-            pred = model(img)
-            loss = yololoss(pred, target)
+            batch_img = batch_img.to(device)
+            # batch_img = F.interpolate(batch_img, 
+            #                     size=(img_h, img_w),
+            #                     mode='bilinear',
+            #                     align_corners=True)
+            pred = model(batch_img)
+            loss = yololoss(pred, batch_target, batch_valid)
 
         scaler.scale(loss).backward()
         scaler.step(optimizer)
@@ -54,20 +117,20 @@ def train(model, optimizer, scaler, data_loader, device, epoch, total_iteration,
         if i % 100 == 0:
             torch.cuda.synchronize()
             t2 = time.time()
-
+            
             print('loss: ', loss)
             print('Epoch[%d / %d]' % (epoch + 1, opt.total_epoch) + ' || iter[%d / %d] ' % (
             i, total_iteration) + \
                 ' || Loss: %.4f ||' % (loss.item()) + ' || lr: %.8f ||' % (
                 optimizer.param_groups[0]['lr']) , end=' ')
             print("time per 100 iter(sec): ", t2 - t1)
-            print("img_size: ", img.shape)
+            print("batch_img_size: ", batch_img.shape)
             t1 = time.time()
         
-        if i % 10 == 0: #for multiscale
-            random_scale_factor = random.randint(-opt.min_random_scale_factor, opt.max_random_scale_factor)
-            img_w = opt.img_w + 32 * random_scale_factor
-            img_h = opt.img_h + 32 * random_scale_factor
+        # if i % 10 == 0: #for multiscale
+        #     random_scale_factor = random.randint(-opt.min_random_scale_factor, opt.max_random_scale_factor)
+        #     img_w = opt.img_w + 32 * random_scale_factor
+        #     img_h = opt.img_h + 32 * random_scale_factor
 
 if __name__ == '__main__':
     
@@ -84,7 +147,7 @@ if __name__ == '__main__':
     parser.add_argument('--model-json-file', default='yolov3tiny_voc.json', type=str)
     parser.add_argument('--num-classes', default=20, type=int)
     parser.add_argument('--lr', default=1e-3, type=float, help='initial learning rate')
-    parser.add_argument('--weights', type=str, default=None, help='load weights to resume training')
+    parser.add_argument('--weights', type=str, default="", help='load weights to resume training')
     parser.add_argument('--total-epoch', type=int, default=300,
                         help='total_epoch')
     parser.add_argument('--dataset-root', default="VOCdataset/train",
@@ -99,7 +162,7 @@ if __name__ == '__main__':
                         help='To choose your gpu.')
     parser.add_argument('--save-folder', default='./weights', type=str,
                         help='where you save weights')
-    parser.add_argument('--backbone-weights', default='backbone_weights/darknet_light_90_58.99.pth', type=str,
+    parser.add_argument('--backbone-weights', default='backbone_weights/tiny_best_top1acc59.38.pth', type=str,
                         help='where is the backbone weights?')
     parser.add_argument('--seed', default=21, type=int)
 
@@ -112,7 +175,6 @@ if __name__ == '__main__':
     training_set = dataset.YOLODataset(path=opt.dataset_root,
                                     img_w=opt.img_w + 32 * opt.max_random_scale_factor,
                                     img_h=opt.img_h + 32 * opt.max_random_scale_factor,
-                                    seed=opt.seed, 
                                     use_augmentation=True)
 
     num_training_set_images = len(training_set)
@@ -146,20 +208,8 @@ if __name__ == '__main__':
 
     start_epoch = 0
 
-    if opt.weights is None:
-        warmup_optimizer = optim.SGD(model.parameters(),
-                        lr=1e-9,
-                        momentum=opt.momentum,
-                        weight_decay=opt.weight_decay)
-
-        train(model=model,
-            optimizer=warmup_optimizer,
-            scaler=scaler,
-            data_loader=training_set_loader,
-            device=device,
-            epoch=-1, #means warmup stage
-            total_iteration=total_iteration,
-            opt=opt)
+    if len(opt.weights) == 0:
+        warmup(model, warmup_epoch=5, device=device, opt=opt)
     else:
         checkpoint = torch.load(opt.weights)
 
@@ -198,3 +248,24 @@ if __name__ == '__main__':
         }
         
         torch.save(checkpoint, os.path.join(opt.save_folder, 'epoch' + str(epoch + 1) + '.pth'))
+
+        random_scale_factor = random.randint(-opt.min_random_scale_factor, opt.max_random_scale_factor)
+        img_w = opt.img_w + 32 * random_scale_factor
+        img_h = opt.img_h + 32 * random_scale_factor
+
+        training_set = dataset.YOLODataset(path=opt.dataset_root,
+                                img_w=img_w,
+                                img_h=img_h,
+                                use_augmentation=True)
+
+        num_training_set_images = len(training_set)
+        print("#Training set images: ", num_training_set_images)
+        assert num_training_set_images > 0, "cannot load dataset, check root dir"
+
+        training_set_loader = torchdata.DataLoader(training_set, opt.batch_size,
+                                    num_workers=opt.num_workers,
+                                    shuffle=True,
+                                    collate_fn=dataset.yolo_collate,
+                                    pin_memory=True,
+                                    drop_last=True)
+
