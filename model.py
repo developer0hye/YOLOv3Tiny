@@ -1,21 +1,45 @@
 import json
+import os
 
 import torch
+import torchvision.ops as ops
 from torch import nn
 
 import numpy as np
 
-from backbone import darknet_tiny, Conv_BN_LeakyReLU
+from backbone import YOLOv3TinyBackbone, ConvBnLeakyReLU
 
+def darknet_conv_initializer(conv_layer):
+    out_channels, in_channels, h, w = conv_layer.weight.shape
+    scale = np.sqrt(2./(w*h*in_channels))
+    nn.init.uniform_(conv_layer.weight, a=-scale, b=scale)
 
 class YOLO(nn.Module):
     def __init__(self,
                  num_classes,
                  in_features,
-                 anchor_box):
+                 anchor_box,
+                 num_samples_per_class):
+
         super(YOLO, self).__init__()
 
         self.encode = nn.Conv2d(in_features, 4 + 1 + num_classes, 1)
+
+        pi_objectness = 0.01# desired mean objectness score when model is initialized.
+        total_num_samples = np.sum(num_samples_per_class)
+
+        darknet_conv_initializer(self.encode)
+        nn.init.constant_(self.encode.bias[0], 0)
+        nn.init.constant_(self.encode.bias[1], 0)
+        nn.init.constant_(self.encode.bias[2], 0)
+        nn.init.constant_(self.encode.bias[3], 0)
+        nn.init.constant_(self.encode.bias[4], -torch.log(torch.tensor((1.-pi_objectness)/pi_objectness)))
+        
+        for i, num_samples in enumerate(num_samples_per_class):
+            pi_class = num_samples/total_num_samples
+            pi_class = np.clip(pi_class, 0.01, 0.99)#for numerical stability
+            nn.init.constant_(self.encode.bias[5 + i], -torch.log(torch.tensor((1.-pi_class)/pi_class)))
+
         self.anchor_box = anchor_box
 
     def decode(self, x, input_img_w, input_img_h):
@@ -30,14 +54,24 @@ class YOLO(nn.Module):
 
             # inference position
             x[:, [0, 1]] = grid_xy + torch.sigmoid(x[:, [0, 1]])  # range: (0, feat_w), (0, feat_h)
+
+
             x[:, 0] = (x[:, 0] / grid_w) * input_img_w
             x[:, 1] = (x[:, 1] / grid_h) * input_img_h
             
+            
             # inference size
-            x[:, [2, 3]] = anchors_wh * torch.exp(x[:, [2, 3]]).type(x.dtype)  # range: (0, input_img_w), (0, input_img_h), to apply amp, we need to conver exp return type
 
+            # clip for numerical stability
+            x[:, 2] = torch.clamp(x[:, 2], max=3.) # exp(3.) = 20.0855
+            x[:, 3] = torch.clamp(x[:, 3], max=3.) # exp(3.) = 20.0855
+
+            x[:, [2, 3]] = anchors_wh * torch.exp(x[:, [2, 3]]).type(x.dtype)  # range: (0, input_img_w), (0, input_img_h), to apply amp, we need to conver exp return type
+            
             # inference objectness and class score
             x[:, 4] = torch.sigmoid(x[:, 4])
+
+            
             x[:, 5:] = torch.sigmoid(x[:, 5:])
 
             class_prob, class_idx = torch.max(x[:, 5:], dim=1)
@@ -65,6 +99,24 @@ def load_model_json(model_json_file="yolov3tiny_voc.json"):
 
         num_classes = model_json["num_classes"]
 
+        labels_path = []
+        for r, d, f in os.walk(os.path.join(model_json["dataset_root"],"train")):
+            for file in f:
+                if file.lower().endswith(".txt"):
+                    labels_path.append(os.path.join(r, file).replace(os.sep, '/'))
+
+        num_samples_per_class = np.zeros(num_classes)
+
+        classes = [np.loadtxt(label_path,
+                    dtype=np.float32,
+                    delimiter=' ').reshape(-1, 5)[:, 0]  for label_path in labels_path]
+        classes = np.concatenate(classes, axis=0)
+        classes = classes.astype(int)
+        uniques, counts = np.unique(classes, return_counts=True)
+
+        for unique, count in zip(uniques, counts):
+            num_samples_per_class[unique] = count
+
         anchor_boxes_mask = [] #append
         anchor_boxes = [] #extend
 
@@ -74,21 +126,22 @@ def load_model_json(model_json_file="yolov3tiny_voc.json"):
         anchor_boxes_mask.append(model_json['stride 32']['mask'])
         anchor_boxes.extend(model_json['stride 32']['anchors'])
 
-        return num_classes, anchor_boxes_mask, anchor_boxes
+        return num_classes, num_samples_per_class, anchor_boxes_mask, anchor_boxes
 
 class YOLOv3Tiny(nn.Module):
     def __init__(self,
                  model_json_file="yolov3tiny_voc.json",
-                 backbone_weight_path=None):
+                 backbone_weight_path="backbone_weights/tiny_best_top1acc59.38.pth"):
         super(YOLOv3Tiny, self).__init__()
 
-        num_classes, anchor_boxes_mask, anchor_boxes = load_model_json(model_json_file)
+        self.backbone = YOLOv3TinyBackbone()
+
+        num_classes, num_samples_per_class, anchor_boxes_mask, anchor_boxes = load_model_json(model_json_file)
         
         self.num_classes = num_classes
         self.anchor_boxes_mask = torch.tensor(anchor_boxes_mask, dtype=torch.long)
         self.anchor_boxes = torch.tensor(anchor_boxes, dtype=torch.float32)
         
-        self.backbone = darknet_tiny(backbone_weight_path)
         self.yolo_layers = nn.ModuleList([])
 
         yolo_layers_in_features = [256, 512]
@@ -97,23 +150,39 @@ class YOLOv3Tiny(nn.Module):
             for anchor_box in self.anchor_boxes[mask]:
                 self.yolo_layers.append(YOLO(num_classes=self.num_classes,
                                              in_features=yolo_layer_in_features,
-                                             anchor_box=anchor_box))
+                                             anchor_box=anchor_box,
+                                             num_samples_per_class=num_samples_per_class))
 
-        self.neck_s32 = Conv_BN_LeakyReLU(1024, 256, 1)
+        self.neck_s32 = ConvBnLeakyReLU(1024, 256, 1)
         self.neck_s16 = nn.Identity()
         
-        self.head_s32 = Conv_BN_LeakyReLU(256, 512, 3, 1)
-        self.head_s16 = Conv_BN_LeakyReLU(384, 256, 3, 1)
+        self.head_s32 = ConvBnLeakyReLU(256, 512, 3, 1)
+        self.head_s16 = ConvBnLeakyReLU(384, 256, 3, 1)
 
         self.up_s32 = nn.Sequential(nn.Upsample(scale_factor=(2, 2), mode='bilinear', align_corners=True),
-                                    Conv_BN_LeakyReLU(256, 128, 1))
+                                    ConvBnLeakyReLU(256, 128, 1))
+        
+        #yolo_layer need different weight initialization method.
+        for block in nn.ModuleList([self.neck_s32, self.head_s32, self.head_s16, self.up_s32]):
+            for m in block.modules():
+                if isinstance(m, nn.Conv2d):
+                    darknet_conv_initializer(m)
+                elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
+                    nn.init.constant_(m.weight, 1)
+                    nn.init.constant_(m.bias, 0)
+
+        if os.path.exists(backbone_weight_path):
+            model_state_dict = torch.load(backbone_weight_path)
+            self.backbone.load_state_dict(model_state_dict)
         
     def extract_features(self, x):
-        f16, f32 = self.backbone(x)
+        feature_pyramid = self.backbone.extract_featrues(x)
 
+        f32 = feature_pyramid["stride 32"]
         f32_neck = self.neck_s32(f32)
         f32 = self.head_s32(f32_neck)
         
+        f16 = feature_pyramid["stride 16"]
         f16 = torch.cat([self.up_s32(f32_neck), f16], dim=1)
         f16_neck = self.neck_s16(f16)
         f16 = self.head_s16(f16_neck)
@@ -145,106 +214,68 @@ class YOLOv3Tiny(nn.Module):
 
         output = {}
         output["batch_size"] = batch_size
-        output["model_input_shape"] = (input_img_h, input_img_w)
+        output["input_img_w"] = input_img_w
+        output["input_img_h"] = input_img_h
         output["num_classes"] = self.num_classes
         output["device"] = x.device
 
-        output["encoded_bboxes"] = all_encoded_bboxes# len(all_encoded_bboxes) = 6
-        output["decoded_bboxes"] = all_decoded_bboxes# len(all_decoded_bboxes) = 32
+        output["encoded_bboxes"] = all_encoded_bboxes
+        output["decoded_bboxes"] = all_decoded_bboxes
         output["yolo_layers_output_shape"] = all_yolo_layers_output_shape
         output["anchor_boxes"] = anchor_boxes
         
         return output
 
-
-def nms(dets, scores, nms_thresh=0.45):
-    """"Pure Python NMS baseline."""
-    x1 = dets[:, 0]  # xmin
-    y1 = dets[:, 1]  # ymin
-    x2 = dets[:, 2]  # xmax
-    y2 = dets[:, 3]  # ymax
-
-    areas = (x2 - x1) * (y2 - y1)  # the size of bbox
-    order = scores.argsort()[::-1]  # sort bounding boxes by decreasing order
-
-    keep = []  # store the final bounding boxes
-    while order.size > 0:
-        i = order[0]  # the index of the bbox with highest confidence
-        keep.append(i)  # save it to keep
-        xx1 = np.maximum(x1[i], x1[order[1:]])
-        yy1 = np.maximum(y1[i], y1[order[1:]])
-        xx2 = np.minimum(x2[i], x2[order[1:]])
-        yy2 = np.minimum(y2[i], y2[order[1:]])
-
-        w = np.maximum(1e-28, xx2 - xx1)
-        h = np.maximum(1e-28, yy2 - yy1)
-        inter = w * h
-
-        # Cross Area / (bbox + particular area - Cross Area)
-        ovr = inter / (areas[i] + areas[order[1:]] - inter)
-        # reserve all the boundingbox whose ovr less than thresh
-        inds = np.where(ovr <= nms_thresh)[0]
-        order = order[inds + 1]
-
-    return keep
-
-
-def bboxes_filtering(output, conf_thresh=0.25, max_dets=100):
-    filtered_batch_multi_scale_bboxes = []
-
+def bboxes_filtering(output, batch_padded_lt,  batch_non_padded_img_shape, batch_original_img_shape, conf_thresh=0.25, iou_thresh=0.35, max_dets=100):
+    batch_filtered_decoded_bboxes = []
     num_classes = output["num_classes"]
+    for decoded_bboxes, padded_lt, non_padded_img_shape, original_img_shape in zip(output["decoded_bboxes"].cpu(), batch_padded_lt,  batch_non_padded_img_shape, batch_original_img_shape):
+        filtered_decoded_bboxes = {"position": [], "confidence": [], "class": [], "num_detected_bboxes": 0}
 
-    for single_multi_scale_bboxes in output["decoded_bboxes"]:
-        filtered_single_multi_scale_bboxes = {}
+        bboxes_confidence = decoded_bboxes[:, 4]
+        confidence_mask = bboxes_confidence > conf_thresh
 
-        confidence = single_multi_scale_bboxes[:, 4]
-        is_postive = confidence > conf_thresh
+        decoded_bboxes = decoded_bboxes[confidence_mask]
+        decoded_bboxes = decoded_bboxes[torch.argsort(decoded_bboxes[:, 4], descending=True)[:max_dets]]#confidence 순으로 나열했을때 상위 100개만 뽑음
+        
+        decoded_bboxes_xywh = decoded_bboxes[:, :4]
 
-        position = single_multi_scale_bboxes[is_postive, :4]
-        confidence, class_idx = confidence[is_postive], single_multi_scale_bboxes[is_postive, 5]
+        decoded_bboxes_xywh[:, 0] -= padded_lt[0]
+        decoded_bboxes_xywh[:, 1] -= padded_lt[1]
 
-        position = position.cpu().numpy()
-        confidence = confidence.cpu().numpy()
-        class_idx = class_idx.cpu().numpy()
+        decoded_bboxes_xywh[:, [0, 2]] /= non_padded_img_shape[0]
+        decoded_bboxes_xywh[:, [1, 3]] /= non_padded_img_shape[1]
 
-        sorted_inds_by_conf = np.argsort(confidence)[::-1][:max_dets]
+        decoded_bboxes_xywh[:, [0, 2]] *= original_img_shape[0]
+        decoded_bboxes_xywh[:, [1, 3]] *= original_img_shape[1]
 
-        position = position[sorted_inds_by_conf]
-        confidence = confidence[sorted_inds_by_conf]
-        class_idx = class_idx[sorted_inds_by_conf]
+        decoded_bboxes_xyxy = ops.box_convert(decoded_bboxes_xywh, 'cxcywh', 'xyxy')
 
-        def xywh2xyxy(box_xywh):
-            box_xyxy = box_xywh.copy()
-            box_xyxy[..., 0] = box_xywh[..., 0] - box_xywh[..., 2] / 2.
-            box_xyxy[..., 1] = box_xywh[..., 1] - box_xywh[..., 3] / 2.
-            box_xyxy[..., 2] = box_xywh[..., 0] + box_xywh[..., 2] / 2.
-            box_xyxy[..., 3] = box_xywh[..., 1] + box_xywh[..., 3] / 2.
-            return box_xyxy
+        decoded_bboxes_confidence = decoded_bboxes[:, 4]
+        decoded_bboxes_class = decoded_bboxes[:, 5]
 
-        # NMS
-        keep = np.zeros(len(position), dtype=np.int)
-        for i in range(num_classes):
-            inds = np.where(class_idx == i)[0]
-            if len(inds) == 0:
+        for idx_class in range(num_classes):
+            class_mask = decoded_bboxes_class == idx_class
+
+            if torch.count_nonzero(class_mask) == 0:
                 continue
+            
+            nms_filtered_inds = ops.nms(decoded_bboxes_xyxy[class_mask], decoded_bboxes_confidence[class_mask], iou_thresh)
 
-            c_bboxes = position[inds]
-            c_scores = confidence[inds]
-            c_keep = nms(xywh2xyxy(c_bboxes), c_scores, 0.45)
-            keep[inds[c_keep]] = 1
+            filtered_decoded_bboxes["position"].append(decoded_bboxes_xywh[class_mask][nms_filtered_inds])
+            filtered_decoded_bboxes["confidence"].append(decoded_bboxes_confidence[class_mask][nms_filtered_inds])
+            filtered_decoded_bboxes["class"].append(decoded_bboxes_class[class_mask][nms_filtered_inds])
 
-        keep = np.where(keep > 0)
-        position = position[keep]
-        confidence = confidence[keep]
-        class_idx = class_idx[keep]
+            filtered_decoded_bboxes["num_detected_bboxes"] += len(nms_filtered_inds)
 
-        filtered_single_multi_scale_bboxes["position"] = position
-        filtered_single_multi_scale_bboxes["confidence"] = confidence
-        filtered_single_multi_scale_bboxes["class"] = class_idx
+        if filtered_decoded_bboxes["num_detected_bboxes"] > 0:
+            filtered_decoded_bboxes["position"] = torch.cat(filtered_decoded_bboxes["position"], axis=0).numpy()
+            filtered_decoded_bboxes["confidence"] = torch.cat(filtered_decoded_bboxes["confidence"], axis=0).numpy()
+            filtered_decoded_bboxes["class"] = torch.cat(filtered_decoded_bboxes["class"], axis=0).numpy()
+            
+        batch_filtered_decoded_bboxes.append(filtered_decoded_bboxes)
 
-        filtered_batch_multi_scale_bboxes.append(filtered_single_multi_scale_bboxes)
-
-    return filtered_batch_multi_scale_bboxes
+    return batch_filtered_decoded_bboxes
 
 def compute_iou(bboxes1, bboxes2, bbox_format):
     eps=1e-5 #to avoid divde by zero exception
@@ -272,41 +303,45 @@ def compute_iou(bboxes1, bboxes2, bbox_format):
         cx1, cy1, w1, h1 = bboxes1[:, 0], bboxes1[:, 1], bboxes1[:, 2], bboxes1[:, 3]
         cx2, cy2, w2, h2 = bboxes2[:, 0], bboxes2[:, 1], bboxes2[:, 2], bboxes2[:, 3]
         
-        x11 = cx1 - w1 / 2
-        y11 = cy1 - h1 / 2
-        x12 = cx1 + w1 / 2 
-        y12 = cy1 + h1 / 2
+        x11 = cx1 - (w1 / 2)
+        y11 = cy1 - (h1 / 2)
+        x12 = cx1 + (w1 / 2)
+        y12 = cy1 + (h1 / 2)
 
-        x21 = cx2 - w2 /2
-        y21 = cy2 - h2 /2
-        x22 = cx2 + w2 /2
-        y22 = cy2 + h2 /2
+        x21 = cx2 - (w2 /2)
+        y21 = cy2 - (h2 /2)
+        x22 = cx2 + (w2 /2)
+        y22 = cy2 + (h2 /2)
 
     inter_x1 = torch.max(x11, x21)
     inter_y1 = torch.max(y11, y21)
     inter_x2 = torch.min(x12, x22)
     inter_y2 = torch.min(y12, y22)
     
-    overapped_area = torch.clamp(inter_x2 - inter_x1, 0) * torch.clamp(inter_y2 - inter_y1, 0) 
-    union_area = (x12 - x11) * (y12 - y11) + (x22 - x21) * (y22 - y21) - overapped_area
+    overapped_area = torch.clamp(inter_x2 - inter_x1 + 1, 0) * torch.clamp(inter_y2 - inter_y1  + 1, 0)
+    union_area = (x12 - x11  + 1) * (y12 - y11  + 1) + (x22 - x21  + 1) * (y22 - y21  + 1) - overapped_area
 
     iou = overapped_area / (union_area + eps)
+
     assert torch.min(iou) >= 0., f"torch.min(iou) =  is {torch.min(iou)} range of iou is [0, 1]"
     assert torch.max(iou) <= 1., f"torch.max(iou) =  is {torch.max(iou)} range of iou is [0, 1]"
+
     return iou
 
-def yololoss(pred, target, ignore_thresh=0.7):
+def yololoss(batch_pred, batch_target, batch_valid, ignore_thresh=0.7):
 
-    batch_size = pred["batch_size"]
-    device = pred["device"]
+    batch_size = batch_pred["batch_size"]
+    device = batch_pred["device"]
     
-    input_img_h, input_img_w = pred["model_input_shape"]
+    input_img_w, input_img_h = batch_pred["input_img_w"], batch_pred["input_img_h"]
 
-    anchor_boxes = pred["anchor_boxes"]
+    anchor_boxes = batch_pred["anchor_boxes"]
     anchor_boxes = torch.stack(anchor_boxes, dim=0) # shape: [n, 2]
 
-    mse_loss = nn.MSELoss(reduction='none')
-    bce_with_logits_loss = nn.BCEWithLogitsLoss(reduction='none')
+    xy_loss = nn.BCEWithLogitsLoss(reduction='none')
+    wh_loss = nn.MSELoss(reduction='none')
+    objectness_loss = nn.BCEWithLogitsLoss(reduction='none')
+    class_loss = nn.BCEWithLogitsLoss(reduction='none')
 
     loss_x = []
     loss_y = []
@@ -321,18 +356,21 @@ def yololoss(pred, target, ignore_thresh=0.7):
     for idx_batch in range(batch_size):
 
         target_encoded_bboxes = []
+        scale_weight = []
         
-        for yolo_layer_output_shape in pred["yolo_layers_output_shape"]:
+        for yolo_layer_output_shape in batch_pred["yolo_layers_output_shape"]:
             target_encoded_bboxes.append(torch.zeros(yolo_layer_output_shape).to(device))
+            scale_weight.append(torch.zeros(1, yolo_layer_output_shape[1], yolo_layer_output_shape[2]).to(device))
 
-        target_bboxes = target[idx_batch]
+        target_bboxes = batch_target[idx_batch]
         target_bboxes[:, [1, 3]] *= input_img_w
         target_bboxes[:, [2, 4]] *= input_img_h
 
-        for target_bbox in target_bboxes:
+        valid_bboxes_mask = batch_valid[idx_batch]
+        for target_bbox, valid in zip(target_bboxes, valid_bboxes_mask):
         
             target_bbox = target_bbox.clone().view(1, 5) # to compute iou with vectorization
-            
+
             # 1. anchor box matching
             iou = compute_iou(anchor_boxes, target_bbox[:, 3:], bbox_format="wh")
             
@@ -340,6 +378,7 @@ def yololoss(pred, target, ignore_thresh=0.7):
             idx_mathced_anchor_box = inds_sorted_iou[0]
 
             matched_target_enocded_bboxes = target_encoded_bboxes[idx_mathced_anchor_box]
+            matched_scale_weight = scale_weight[idx_mathced_anchor_box]
 
             # 2. make ground truth
             anchor_w, anchor_h = anchor_boxes[idx_mathced_anchor_box]
@@ -347,6 +386,12 @@ def yololoss(pred, target, ignore_thresh=0.7):
 
             target_x, target_y, target_w, target_h = target_bbox[0, 1:]
             
+            if target_w < 2:
+                continue
+            
+            if target_h < 2:
+                continue
+
             grid_x = (target_x / input_img_w) * grid_w
             grid_y = (target_y / input_img_h) * grid_h
             
@@ -360,66 +405,75 @@ def yololoss(pred, target, ignore_thresh=0.7):
             assert offset_x >= 0. and offset_x <= 1.
             assert offset_y >= 0. and offset_y <= 1.
 
-            assert target_w >= 0.
-            assert target_h >= 0.
+            assert target_w > 0.
+            assert target_h > 0.
 
-            assert anchor_w >= 0.
-            assert anchor_h >= 0.
+            assert anchor_w > 0.
+            assert anchor_h > 0.
 
             power_w = torch.log(target_w/anchor_w)
             power_h = torch.log(target_h/anchor_h)
 
             c = int(target_bbox[0, 0])
 
-            if matched_target_enocded_bboxes[4, grid_tl_y, grid_tl_x] == 1.:#already marked, pass
+            if not valid:
+                matched_target_enocded_bboxes[4, grid_tl_y, grid_tl_x] = -1
                 continue
 
+            if matched_target_enocded_bboxes[4, grid_tl_y, grid_tl_x] == 1.:#already marked, pass
+                continue
+            
             num_target_bboxes += 1
 
+            matched_scale_weight[0, grid_tl_y, grid_tl_x] = 2. - ((target_w * target_h)/(input_img_w * input_img_h))
             matched_target_enocded_bboxes[0, grid_tl_y, grid_tl_x] = offset_x
             matched_target_enocded_bboxes[1, grid_tl_y, grid_tl_x] = offset_y
             matched_target_enocded_bboxes[2, grid_tl_y, grid_tl_x] = power_w
             matched_target_enocded_bboxes[3, grid_tl_y, grid_tl_x] = power_h
             matched_target_enocded_bboxes[4, grid_tl_y, grid_tl_x] = 1
             matched_target_enocded_bboxes[5 + c, grid_tl_y, grid_tl_x] = 1
-            
-        # flatten features
-        flatten_pred_encoded_bboxes = pred["encoded_bboxes"][idx_batch]
-        flatten_pred_decoded_bboxes = pred["decoded_bboxes"][idx_batch]
 
+        # flatten features
+        flatten_pred_encoded_bboxes = batch_pred["encoded_bboxes"][idx_batch]
+        flatten_pred_decoded_bboxes = batch_pred["decoded_bboxes"][idx_batch]
+        
         flatten_target_encoded_bboxes = []
+        flatten_scale_weight = []
 
         for idx_anchor_boxes in range(len(anchor_boxes)):
             flatten_target_encoded_bboxes.append(target_encoded_bboxes[idx_anchor_boxes].flatten(start_dim=1).T)
+            flatten_scale_weight.append(scale_weight[idx_anchor_boxes].flatten(start_dim=1).T)
 
         flatten_target_encoded_bboxes = torch.cat(flatten_target_encoded_bboxes, dim=0)
+        flatten_scale_weight = torch.cat(flatten_scale_weight, dim=0)
 
         assert flatten_pred_encoded_bboxes.shape == flatten_target_encoded_bboxes.shape
 
         foreground_mask = flatten_target_encoded_bboxes[:, 4] == 1
         background_mask = flatten_target_encoded_bboxes[:, 4] == 0
-
-        #localization
-        loss_x.append(bce_with_logits_loss(flatten_pred_encoded_bboxes[foreground_mask][:, 0], flatten_target_encoded_bboxes[foreground_mask][:, 0]))
-        loss_y.append(bce_with_logits_loss(flatten_pred_encoded_bboxes[foreground_mask][:, 1], flatten_target_encoded_bboxes[foreground_mask][:, 1]))
-        loss_w.append(mse_loss(flatten_pred_encoded_bboxes[foreground_mask][:, 2], flatten_target_encoded_bboxes[foreground_mask][:, 2]))
-        loss_h.append(mse_loss(flatten_pred_encoded_bboxes[foreground_mask][:, 3], flatten_target_encoded_bboxes[foreground_mask][:, 3]))
-
-        #classification(foreground or background)
-        loss_foreground_objectness.append(bce_with_logits_loss(flatten_pred_encoded_bboxes[foreground_mask][:, 4], flatten_target_encoded_bboxes[foreground_mask][:, 4]))
         
-        # print("bf ignore: ", torch.sum(background_mask))
-        for target_bbox in target_bboxes.to(device):
+        if torch.count_nonzero(foreground_mask) > 0:
+            #localization
+            loss_x.append(flatten_scale_weight[foreground_mask][:, 0] * xy_loss(flatten_pred_encoded_bboxes[foreground_mask][:, 0], flatten_target_encoded_bboxes[foreground_mask][:, 0]))
+            loss_y.append(flatten_scale_weight[foreground_mask][:, 0] * xy_loss(flatten_pred_encoded_bboxes[foreground_mask][:, 1], flatten_target_encoded_bboxes[foreground_mask][:, 1]))
+            loss_w.append(flatten_scale_weight[foreground_mask][:, 0] * wh_loss(flatten_pred_encoded_bboxes[foreground_mask][:, 2], flatten_target_encoded_bboxes[foreground_mask][:, 2]))
+            loss_h.append(flatten_scale_weight[foreground_mask][:, 0] * wh_loss(flatten_pred_encoded_bboxes[foreground_mask][:, 3], flatten_target_encoded_bboxes[foreground_mask][:, 3]))
+
+            #classification(foreground or background)
+            loss_foreground_objectness.append(objectness_loss(flatten_pred_encoded_bboxes[foreground_mask][:, 4], flatten_target_encoded_bboxes[foreground_mask][:, 4]))
+            loss_class_prob.append(class_loss(flatten_pred_encoded_bboxes[foreground_mask][:, 5:], flatten_target_encoded_bboxes[foreground_mask][:, 5:]))
+        
+        target_bboxes = target_bboxes.to(device)
+        for target_bbox in target_bboxes:
+
             target_bbox = target_bbox.view(1, 5)
             target_class = target_bbox[0, 0]
 
             iou = compute_iou(flatten_pred_decoded_bboxes[:, :4] ,target_bbox[:, 1:], bbox_format="cxcywh")
             background_mask[(iou > ignore_thresh) & (flatten_pred_decoded_bboxes[:, 5] == target_class)] = 0.# ignore
 
+        loss_background_objectness.append(objectness_loss(flatten_pred_encoded_bboxes[background_mask][:, 4], flatten_target_encoded_bboxes[background_mask][:, 4]))
 
-        loss_background_objectness.append(bce_with_logits_loss(flatten_pred_encoded_bboxes[background_mask][:, 4], flatten_target_encoded_bboxes[background_mask][:, 4]))
-        loss_class_prob.append(bce_with_logits_loss(flatten_pred_encoded_bboxes[foreground_mask][:, 5:], flatten_target_encoded_bboxes[foreground_mask][:, 5:]))
-        
     loss_x = torch.sum(torch.cat(loss_x))/num_target_bboxes
     loss_y = torch.sum(torch.cat(loss_y))/num_target_bboxes
     loss_w = torch.sum(torch.cat(loss_w))/num_target_bboxes
@@ -428,7 +482,7 @@ def yololoss(pred, target, ignore_thresh=0.7):
     loss_background_objectness = torch.sum(torch.cat(loss_background_objectness))/len(anchor_boxes)/batch_size
     loss_class_prob = torch.sum(torch.cat(loss_class_prob))/num_target_bboxes
 
-    # anchor_boxes 수에 따라 background 샘플 수가 많아지고 이에따라 class imbalance 문제 심해짐, 이거를 anchor_boxes수로 나누어서 anchor boxes 수에 어느정도 independent하게끔 설계
+    # anchor_boxes 수에 따라 background 샘플 수가 많아지고 이에따라 class imbalance 문제 심해짐, 이거를 anchor_boxes수로 나누어서 anchor boxes 수에 어느정도 independent하게끔 loss를 설계
     # batch_size 도 위와 같은 이유로 나누어줌
     # 입력 이미지의 Scale 또한 background 샘플 수에 영향을 미치는 factor인데... 이거는 어떻게 고려해주는 게 좋을까...흠... 기준이 될만한 factor가 없네
     # 뭐랄까... 설명하기 어려움, positive sample들을 target_bboxes수로 나누어주면 batch_size, 이미지내 positive sample 수에 어느정도 independent해지듯이...
@@ -436,7 +490,7 @@ def yololoss(pred, target, ignore_thresh=0.7):
     # 학습의 성패는 loss_background_objectness 를 얼마나 잘 컨트롤 해주냐에 따라 갈림
 
     loss = loss_x + loss_y + loss_w + loss_h + loss_foreground_objectness + loss_background_objectness + loss_class_prob
-
+    
     return loss
 
 if __name__ == '__main__':
@@ -476,11 +530,10 @@ if __name__ == '__main__':
 
     torch.set_printoptions(precision=3, sci_mode=False)
 
-    model = YOLOv3Tiny(backbone_weight_path="backbone_weights/darknet_light_90_58.99.pth").cuda()
+    model = YOLOv3Tiny().cuda()
 
     import cv2
     import torchvision.transforms as transforms
-    import tools
 
     import dataset
     import torch.utils.data as data

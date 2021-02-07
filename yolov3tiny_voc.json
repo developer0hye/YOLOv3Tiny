@@ -1,4 +1,5 @@
 {
+	"dataset_root": "./VOCdataset",
 	"num_classes": 20,
 	"stride 16": {
 		"mask": [
