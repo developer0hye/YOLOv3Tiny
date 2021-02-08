@@ -114,7 +114,7 @@ def train(model, optimizer, scaler, data_loader, device, epoch, total_iteration,
         scaler.step(optimizer)
         scaler.update()
         
-        if i % 10 == 0:
+        if i % 100 == 0:
             torch.cuda.synchronize()
             t2 = time.time()
             
