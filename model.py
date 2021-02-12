@@ -250,6 +250,11 @@ def bboxes_filtering(output, batch_padded_lt,  batch_non_padded_img_shape, batch
         decoded_bboxes_xywh[:, [1, 3]] *= original_img_shape[1]
 
         decoded_bboxes_xyxy = ops.box_convert(decoded_bboxes_xywh, 'cxcywh', 'xyxy')
+        
+        #+0.3 mAP
+        decoded_bboxes_xyxy[:, [0, 2]] = torch.clamp(decoded_bboxes_xyxy[:, [0, 2]], 0, original_img_shape[0])
+        decoded_bboxes_xyxy[:, [1, 3]] = torch.clamp(decoded_bboxes_xyxy[:, [1, 3]], 0, original_img_shape[1])
+        
 
         decoded_bboxes_confidence = decoded_bboxes[:, 4]
         decoded_bboxes_class = decoded_bboxes[:, 5]
