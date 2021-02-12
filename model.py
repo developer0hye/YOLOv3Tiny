@@ -239,6 +239,7 @@ def bboxes_filtering(output, batch_padded_lt,  batch_non_padded_img_shape, batch
         decoded_bboxes = decoded_bboxes[torch.argsort(decoded_bboxes[:, 4], descending=True)[:max_dets]]#confidence 순으로 나열했을때 상위 100개만 뽑음
         
         decoded_bboxes_xywh = decoded_bboxes[:, :4]
+        decoded_bboxes_xywh = decoded_bboxes_xywh.type(torch.float32)
 
         decoded_bboxes_xywh[:, 0] -= padded_lt[0]
         decoded_bboxes_xywh[:, 1] -= padded_lt[1]
@@ -283,6 +284,9 @@ def bboxes_filtering(output, batch_padded_lt,  batch_non_padded_img_shape, batch
     return batch_filtered_decoded_bboxes
 
 def compute_iou(bboxes1, bboxes2, bbox_format):
+    bboxes1 = bboxes1.type(torch.float32)
+    bboxes2 = bboxes2.type(torch.float32)
+
     eps=1e-5 #to avoid divde by zero exception
     if bbox_format == "wh":
         assert bboxes1.shape[1] == 2
@@ -325,6 +329,9 @@ def compute_iou(bboxes1, bboxes2, bbox_format):
     
     overapped_area = torch.clamp(inter_x2 - inter_x1 + 1, 0) * torch.clamp(inter_y2 - inter_y1  + 1, 0)
     union_area = (x12 - x11  + 1) * (y12 - y11  + 1) + (x22 - x21  + 1) * (y22 - y21  + 1) - overapped_area
+    
+    assert torch.count_nonzero(torch.isinf(overapped_area)) == 0
+    assert torch.count_nonzero(torch.isinf(union_area)) == 0
 
     iou = overapped_area / (union_area + eps)
 
@@ -497,142 +504,3 @@ def yololoss(batch_pred, batch_target, batch_valid, ignore_thresh=0.7):
     loss = loss_x + loss_y + loss_w + loss_h + loss_foreground_objectness + loss_background_objectness + loss_class_prob
     
     return loss
-
-if __name__ == '__main__':
-
-    # import cv2
-
-    # bbox1 = torch.tensor([170.2334 , 154.0884 ,  90.60755, 112.94735]).reshape(1, 4)
-    # # bbox2 = torch.tensor([201.4782 , 169.17638,  90.23747, 100.1186 ]).reshape(1, 4)
-    # bbox2 = torch.tensor([201.4782 , 154.0884,  90.60755, 112.94735 ]).reshape(1, 4)
-    # bboxes = [bbox1, bbox2]
-    
-    # img_draw = cv2.imread("test_example/000017.jpg")
-
-    # import augmentation
-    # img_draw = augmentation.letter_box_resize(img_draw, dsize=(416, 416))
-    
-
-    # for idx in range(len(bboxes)):
-    #     bbox = bboxes[idx].view(-1)
-    #     # bbox[[0, 2]] *= img_w
-    #     # bbox[[1, 3]] *= img_h
-    #     bbox = bbox.numpy().astype(np.int32)
-
-    #     l = int(bbox[0] - bbox[2] / 2)
-    #     r = int(bbox[0] + bbox[2] / 2)
-
-    #     t = int(bbox[1] - bbox[3] / 2)
-    #     b = int(bbox[1] + bbox[3] / 2)
-
-    #     # print(c)
-    #     cv2.rectangle(img=img_draw, pt1=(l, t), pt2=(r, b), color=(0, 255, 0))
-    # print(compute_iou(bbox1, bbox2, bbox_format='cxcywh'))
-    # cv2.imshow('img', img_draw)
-    # cv2.waitKey(0)
-
-    # exit()
-
-    torch.set_printoptions(precision=3, sci_mode=False)
-
-    model = YOLOv3Tiny().cuda()
-
-    import cv2
-    import torchvision.transforms as transforms
-
-    import dataset
-    import torch.utils.data as data
-    import augmentation
-
-    train_dataset = dataset.YOLODataset(path="test_example_v2", use_augmentation=True)
-    data_loader = data.DataLoader(train_dataset, 32,
-                                  num_workers=8,
-                                  shuffle=True,
-                                  collate_fn=dataset.yolo_collate,
-                                  pin_memory=True,
-                                  drop_last=False)
-
-    epochs = 300
-    lr = 1e-3
-    optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4)
-
-    for epoch in range(epochs):
-        print("epoch: ", epoch)
-        model.train()
-        
-        
-        for img, target, inds in data_loader:
-            img = img.cuda()
-            i = 0
-            while True:
-                optimizer.zero_grad()
-
-                pred = model(img)
-
-                loss = yololoss(pred, target)
-                loss.backward()
-                
-                optimizer.step()
-                break
-                # i += 1
-                # if i > 10:
-                #    break
-
-        # for param_group in optimizer.param_groups:
-        #     param_group['lr'] = lr*0.5*(1. + np.cos(((epoch / epochs))*np.pi))
-
-
-        model.eval()
-        with torch.no_grad():
-            img = cv2.imread("test_example/000017.jpg")
-            #img = cv2.resize(img, (416, 416))
-            img = augmentation.LetterBoxResize(img, (416, 416))
-
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            img = img.astype(np.float32)
-            img /= 255.
-            img = torch.from_numpy(img).permute(2, 0, 1).contiguous()
-
-            img = img.unsqueeze(0)
-
-            batch_multi_scale_bboxes = model(img.cuda())
-
-            filtered_batch_multi_scale_bboxes = bboxes_filtering(batch_multi_scale_bboxes, 0.25)
-            filtered_single_multi_scale_bboxes = filtered_batch_multi_scale_bboxes[0]
-            print(filtered_single_multi_scale_bboxes)
-            img_draw = cv2.imread("test_example/000017.jpg")
-            import augmentation
-            img_draw = augmentation.LetterBoxResize(img_draw, (416, 416))
-            img_h, img_w = img_draw.shape[:2]
-
-            for idx in range(len(filtered_single_multi_scale_bboxes['position'])):
-                c = filtered_single_multi_scale_bboxes["class"][idx]
-                bbox = filtered_single_multi_scale_bboxes['position'][idx]
-                # bbox[[0, 2]] *= img_w
-                # bbox[[1, 3]] *= img_h
-                bbox = bbox.astype(np.int32)
-
-                l = int(bbox[0] - bbox[2] / 2)
-                r = int(bbox[0] + bbox[2] / 2)
-
-                t = int(bbox[1] - bbox[3] / 2)
-                b = int(bbox[1] + bbox[3] / 2)
-
-                # print(c)
-                cv2.rectangle(img=img_draw, pt1=(l, t), pt2=(r, b), color=(0, 255, 0))
-
-            cv2.imshow('img', img_draw)
-            cv2.waitKey(30)
-            cv2.imwrite(str(epoch) + ".jpg", img_draw)
-    
-        import random
-        random_scale_factor = random.randint(10, 19)
-
-        train_dataset = dataset.YOLODataset(path="test_example_v2", use_augmentation=False, img_w=32*random_scale_factor, img_h=32*random_scale_factor)
-        batch_size = 32 if random_scale_factor <= 13 else 32//2
-        data_loader = data.DataLoader(train_dataset, batch_size,
-                                    num_workers=8,
-                                    shuffle=True,
-                                    collate_fn=dataset.yolo_collate,
-                                    pin_memory=True,
-                                    drop_last=False)
