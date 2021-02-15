@@ -70,10 +70,7 @@ class YOLO(nn.Module):
             
             # inference objectness and class score
             x[:, 4] = torch.sigmoid(x[:, 4])
-
-            
             x[:, 5:] = torch.sigmoid(x[:, 5:])
-
             class_prob, class_idx = torch.max(x[:, 5:], dim=1)
 
             x[:, 4] = x[:, 4] * class_prob # confidence!
@@ -131,7 +128,7 @@ def load_model_json(model_json_file="yolov3tiny_voc.json"):
 class YOLOv3Tiny(nn.Module):
     def __init__(self,
                  model_json_file="yolov3tiny_voc.json",
-                 backbone_weight_path="backbone_weights/tiny_best_top1acc59.38.pth"):
+                 backbone_weight_path="backbone_weights/tiny_best_top1acc58.97.pth"):
         super(YOLOv3Tiny, self).__init__()
 
         self.backbone = YOLOv3TinyBackbone()
@@ -174,6 +171,7 @@ class YOLOv3Tiny(nn.Module):
         if os.path.exists(backbone_weight_path):
             model_state_dict = torch.load(backbone_weight_path)
             self.backbone.load_state_dict(model_state_dict)
+            print("from pretrained!!!")
         
     def extract_features(self, x):
         feature_pyramid = self.backbone.extract_featrues(x)
@@ -341,7 +339,7 @@ def compute_iou(bboxes1, bboxes2, bbox_format):
     return iou
 
 def yololoss(batch_pred, batch_target, batch_valid, ignore_thresh=0.7):
-
+    
     batch_size = batch_pred["batch_size"]
     device = batch_pred["device"]
     
@@ -463,36 +461,46 @@ def yololoss(batch_pred, batch_target, batch_valid, ignore_thresh=0.7):
 
         foreground_mask = flatten_target_encoded_bboxes[:, 4] == 1
         background_mask = flatten_target_encoded_bboxes[:, 4] == 0
+
+        with torch.no_grad():
+            target_bboxes = target_bboxes.to(device)
+            for target_bbox in target_bboxes:
+                target_bbox = target_bbox.view(1, 5)
+                target_class = target_bbox[0, 0]
+
+                iou = compute_iou(flatten_pred_decoded_bboxes[:, :4] ,target_bbox[:, 1:], bbox_format="cxcywh")
+                background_mask[(iou > ignore_thresh) & (flatten_pred_decoded_bboxes[:, 5] == target_class)] = 0.# ignore
         
         if torch.count_nonzero(foreground_mask) > 0:
             #localization
-            loss_x.append(flatten_scale_weight[foreground_mask][:, 0] * xy_loss(flatten_pred_encoded_bboxes[foreground_mask][:, 0], flatten_target_encoded_bboxes[foreground_mask][:, 0]))
-            loss_y.append(flatten_scale_weight[foreground_mask][:, 0] * xy_loss(flatten_pred_encoded_bboxes[foreground_mask][:, 1], flatten_target_encoded_bboxes[foreground_mask][:, 1]))
-            loss_w.append(flatten_scale_weight[foreground_mask][:, 0] * wh_loss(flatten_pred_encoded_bboxes[foreground_mask][:, 2], flatten_target_encoded_bboxes[foreground_mask][:, 2]))
-            loss_h.append(flatten_scale_weight[foreground_mask][:, 0] * wh_loss(flatten_pred_encoded_bboxes[foreground_mask][:, 3], flatten_target_encoded_bboxes[foreground_mask][:, 3]))
+            loss_x.append(flatten_scale_weight[foreground_mask, 0] * xy_loss(flatten_pred_encoded_bboxes[foreground_mask, 0], flatten_target_encoded_bboxes[foreground_mask, 0]))
+            loss_y.append(flatten_scale_weight[foreground_mask, 0] * xy_loss(flatten_pred_encoded_bboxes[foreground_mask, 1], flatten_target_encoded_bboxes[foreground_mask, 1]))
+            loss_w.append(flatten_scale_weight[foreground_mask, 0] * wh_loss(flatten_pred_encoded_bboxes[foreground_mask, 2], flatten_target_encoded_bboxes[foreground_mask, 2]))
+            loss_h.append(flatten_scale_weight[foreground_mask, 0] * wh_loss(flatten_pred_encoded_bboxes[foreground_mask, 3], flatten_target_encoded_bboxes[foreground_mask, 3]))
+            loss_foreground_objectness.append(objectness_loss(flatten_pred_encoded_bboxes[foreground_mask, 4], flatten_target_encoded_bboxes[foreground_mask, 4]))
+            loss_class_prob.append(class_loss(flatten_pred_encoded_bboxes[foreground_mask, 5:], flatten_target_encoded_bboxes[foreground_mask, 5:]))
 
-            #classification(foreground or background)
-            loss_foreground_objectness.append(objectness_loss(flatten_pred_encoded_bboxes[foreground_mask][:, 4], flatten_target_encoded_bboxes[foreground_mask][:, 4]))
-            loss_class_prob.append(class_loss(flatten_pred_encoded_bboxes[foreground_mask][:, 5:], flatten_target_encoded_bboxes[foreground_mask][:, 5:]))
-        
-        target_bboxes = target_bboxes.to(device)
-        for target_bbox in target_bboxes:
+        loss_background_objectness.append(objectness_loss(flatten_pred_encoded_bboxes[background_mask, 4], flatten_target_encoded_bboxes[background_mask, 4]))
+    
+    loss_x = torch.sum(torch.cat(loss_x))/batch_size
+    loss_y = torch.sum(torch.cat(loss_y))/batch_size
+    loss_w = torch.sum(torch.cat(loss_w))/batch_size
+    loss_h = torch.sum(torch.cat(loss_h))/batch_size
 
-            target_bbox = target_bbox.view(1, 5)
-            target_class = target_bbox[0, 0]
+    loss_foreground_objectness = torch.cat(loss_foreground_objectness)
+    loss_background_objectness = torch.cat(loss_background_objectness)
 
-            iou = compute_iou(flatten_pred_decoded_bboxes[:, :4] ,target_bbox[:, 1:], bbox_format="cxcywh")
-            background_mask[(iou > ignore_thresh) & (flatten_pred_decoded_bboxes[:, 5] == target_class)] = 0.# ignore
+    loss_objectness = (torch.sum(loss_foreground_objectness)+(torch.sum(loss_background_objectness)/len(anchor_boxes)))/batch_size
+    loss_class_prob = torch.sum(torch.cat(loss_class_prob))/batch_size
 
-        loss_background_objectness.append(objectness_loss(flatten_pred_encoded_bboxes[background_mask][:, 4], flatten_target_encoded_bboxes[background_mask][:, 4]))
-
-    loss_x = torch.sum(torch.cat(loss_x))/num_target_bboxes
-    loss_y = torch.sum(torch.cat(loss_y))/num_target_bboxes
-    loss_w = torch.sum(torch.cat(loss_w))/num_target_bboxes
-    loss_h = torch.sum(torch.cat(loss_h))/num_target_bboxes
-    loss_foreground_objectness = torch.sum(torch.cat(loss_foreground_objectness))/num_target_bboxes
-    loss_background_objectness = torch.sum(torch.cat(loss_background_objectness))/len(anchor_boxes)/batch_size
-    loss_class_prob = torch.sum(torch.cat(loss_class_prob))/num_target_bboxes
+    # print("********")
+    # print(loss_x)
+    # print(loss_y)
+    # print(loss_w)
+    # print(loss_h)
+    # print(loss_objectness)
+    # print(loss_class_prob)
+    # exit()
 
     # anchor_boxes 수에 따라 background 샘플 수가 많아지고 이에따라 class imbalance 문제 심해짐, 이거를 anchor_boxes수로 나누어서 anchor boxes 수에 어느정도 independent하게끔 loss를 설계
     # batch_size 도 위와 같은 이유로 나누어줌
@@ -501,6 +509,6 @@ def yololoss(batch_pred, batch_target, batch_valid, ignore_thresh=0.7):
     # negative sample들도 그럼 negative sample 수로 나눠주면 되지 않냐고 생각하게 되는데 실제로 mean 해서 backpropagation 시키면 FP(배경을 물체로 detection) 케이스 수가 기하급수적 증가됨
     # 학습의 성패는 loss_background_objectness 를 얼마나 잘 컨트롤 해주냐에 따라 갈림
 
-    loss = loss_x + loss_y + loss_w + loss_h + loss_foreground_objectness + loss_background_objectness + loss_class_prob
+    loss = loss_x + loss_y + loss_w + loss_h + loss_objectness + loss_class_prob
     
     return loss
