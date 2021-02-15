@@ -162,7 +162,7 @@ if __name__ == '__main__':
                         help='To choose your gpu.')
     parser.add_argument('--save-folder', default='./weights', type=str,
                         help='where you save weights')
-    parser.add_argument('--backbone-weights', default='backbone_weights/tiny_best_top1acc59.38.pth', type=str,
+    parser.add_argument('--backbone-weights', default='backbone_weights/tiny_best_top1acc58.97.pth', type=str,
                         help='where is the backbone weights?')
     parser.add_argument('--seed', default=21, type=int)
 
@@ -212,7 +212,6 @@ if __name__ == '__main__':
         warmup(model, warmup_epoch=5, device=device, opt=opt)
     else:
         checkpoint = torch.load(opt.weights)
-
         start_epoch = checkpoint['epoch'] + 1
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
