@@ -1,3 +1,3 @@
 # YOLOv3Tiny
 
-mAP: 55
+mAP: 58.9
