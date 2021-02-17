@@ -86,7 +86,7 @@ def warmup(model, warmup_epoch, device, opt):
                 t1 = time.time()
 
    
-def train(model, optimizer, scaler, data_loader, device, epoch, total_iteration, opt):
+def train(model, optimizer, scaler, scheduler, data_loader, device, epoch, total_iteration, opt):
     model.train()
 
     torch.cuda.synchronize()
@@ -113,6 +113,7 @@ def train(model, optimizer, scaler, data_loader, device, epoch, total_iteration,
         scaler.scale(loss).backward()
         scaler.step(optimizer)
         scaler.update()
+        scheduler.step()
         
         if i % 100 == 0:
             torch.cuda.synchronize()
@@ -204,7 +205,7 @@ if __name__ == '__main__':
     iterations_per_epoch = num_training_set_images // opt.batch_size 
     total_iteration = iterations_per_epoch * opt.total_epoch
 
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=opt.total_epoch)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_iteration)
 
     start_epoch = 0
 
@@ -225,13 +226,12 @@ if __name__ == '__main__':
         train(model=model,
               optimizer=optimizer,
               scaler=scaler,
+              scheduler=scheduler,
               data_loader=training_set_loader,
               device=device,
               epoch=epoch,
               total_iteration=total_iteration,
               opt=opt)
-        
-        scheduler.step()
         
         #mAP = validation()
         #best_mAP = max(best_mAP, mAP)
