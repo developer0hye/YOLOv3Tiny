@@ -490,7 +490,7 @@ def yololoss(batch_pred, batch_target, batch_valid, ignore_thresh=0.7):
     loss_foreground_objectness = torch.cat(loss_foreground_objectness)
     loss_background_objectness = torch.cat(loss_background_objectness)
 
-    loss_objectness = (torch.sum(loss_foreground_objectness)+(torch.sum(loss_background_objectness)/len(anchor_boxes)))/batch_size
+    loss_objectness = (torch.sum(loss_foreground_objectness)+torch.sum(loss_background_objectness))/batch_size
     loss_class_prob = torch.sum(torch.cat(loss_class_prob))/batch_size
 
     # print("********")
