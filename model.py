@@ -338,7 +338,7 @@ def compute_iou(bboxes1, bboxes2, bbox_format):
 
     return iou
 
-def yololoss(batch_pred, batch_target, batch_valid, ignore_thresh=0.7):
+def yololoss(batch_pred, batch_target, ignore_thresh=0.7):
     
     batch_size = batch_pred["batch_size"]
     device = batch_pred["device"]
@@ -376,8 +376,7 @@ def yololoss(batch_pred, batch_target, batch_valid, ignore_thresh=0.7):
         target_bboxes[:, [1, 3]] *= input_img_w
         target_bboxes[:, [2, 4]] *= input_img_h
 
-        valid_bboxes_mask = batch_valid[idx_batch]
-        for target_bbox, valid in zip(target_bboxes, valid_bboxes_mask):
+        for target_bbox in target_bboxes:
         
             target_bbox = target_bbox.clone().view(1, 5) # to compute iou with vectorization
 
@@ -425,10 +424,6 @@ def yololoss(batch_pred, batch_target, batch_valid, ignore_thresh=0.7):
             power_h = torch.log(target_h/anchor_h)
 
             c = int(target_bbox[0, 0])
-
-            if not valid:
-                matched_target_enocded_bboxes[4, grid_tl_y, grid_tl_x] = -1
-                continue
 
             if matched_target_enocded_bboxes[4, grid_tl_y, grid_tl_x] == 1.:#already marked, pass
                 continue

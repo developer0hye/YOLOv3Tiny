@@ -54,8 +54,6 @@ class YOLODataset(Dataset):
         bboxes_class = label[:, 0].astype(np.long).reshape(-1, 1)
         bboxes_xywh = label[:, 1:].reshape(-1, 4)
 
-        valid_bboxes_mask = np.ones_like(bboxes_class)
-
         img, bboxes_xywh, bboxes_class, original_img_shape, non_padded_img_shape, padded_lt = augmentation.LetterBoxResize(img, (self.img_w, self.img_h), bboxes_xywh, bboxes_class)
         if self.use_augmentation:
             img, bboxes_xywh = augmentation.HorFlip(img, bboxes_xywh)
@@ -86,7 +84,6 @@ class YOLODataset(Dataset):
         data = {}
         data["img"] = img
         data["bboxes"] = bboxes
-        data["valid"] = valid_bboxes_mask
         data["idx"] = idx
         data["original_img_shape"] = original_img_shape
         data["non_padded_img_shape"] = non_padded_img_shape
@@ -102,7 +99,6 @@ def yolo_collate(batch_data):
 
     batch_img = []
     batch_bboxes = []
-    batch_valid = []
     batch_idx = []
     batch_original_img_shape = []
     batch_non_padded_img_shape = []
@@ -111,7 +107,6 @@ def yolo_collate(batch_data):
     for data in batch_data:
         batch_img.append(data["img"])
         batch_bboxes.append(data["bboxes"])
-        batch_valid.append(data["valid"])
         batch_idx.append(data["idx"])
         batch_original_img_shape.append(data["original_img_shape"])
         batch_non_padded_img_shape.append(data["non_padded_img_shape"])
@@ -126,7 +121,6 @@ def yolo_collate(batch_data):
     batch_data = {}
     batch_data["img"] = batch_img
     batch_data["bboxes"] = batch_bboxes
-    batch_data["valid"] = batch_valid
     batch_data["idx"] = batch_idx
     batch_data["original_img_shape"] = batch_original_img_shape
     batch_data["non_padded_img_shape"] = batch_non_padded_img_shape
