@@ -55,7 +55,6 @@ def warmup(model, warmup_epoch, device, opt):
         for i, batch_data in enumerate(training_set_loader):
             batch_img = batch_data["img"]
             batch_target = batch_data["bboxes"]
-            batch_valid = batch_data["valid"]
 
             iteration += 1
             warmup_lr = opt.lr * float(iteration) / warmup_iteration
@@ -66,7 +65,7 @@ def warmup(model, warmup_epoch, device, opt):
             with torch.cuda.amp.autocast():
                 batch_img = batch_img.to(device)
                 pred = model(batch_img)
-                loss = yololoss(pred, batch_target, batch_valid)
+                loss = yololoss(pred, batch_target)
 
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -98,7 +97,6 @@ def train(model, optimizer, scaler, scheduler, data_loader, device, epoch, total
     for i, batch_data in enumerate(data_loader):
         batch_img = batch_data["img"]
         batch_target = batch_data["bboxes"]
-        batch_valid = batch_data["valid"]
 
         optimizer.zero_grad()
         with torch.cuda.amp.autocast():
@@ -108,7 +106,7 @@ def train(model, optimizer, scaler, scheduler, data_loader, device, epoch, total
                                 mode='bilinear',
                                 align_corners=True)
             pred = model(batch_img)
-            loss = yololoss(pred, batch_target, batch_valid)
+            loss = yololoss(pred, batch_target)
 
         scaler.scale(loss).backward()
         scaler.step(optimizer)
