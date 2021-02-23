@@ -26,13 +26,8 @@ def setup_seed(seed):
     np.random.seed(seed)
     random.seed(seed)
 
-def warmup(model, warmup_epoch, device, opt):
+def warmup(model, optimizer, warmup_epoch, device, opt):
     scaler = GradScaler()
-
-    optimizer = optim.SGD(model.parameters(),
-                        lr=0.,
-                        momentum=opt.momentum,
-                        weight_decay=0.)
 
     training_set = dataset.YOLODataset(path=opt.dataset_root,
                                     img_w=opt.img_w,
@@ -196,7 +191,7 @@ if __name__ == '__main__':
     scaler = GradScaler()
     
     optimizer = optim.SGD(model.parameters(),
-                        lr=opt.lr,
+                        lr=0.,
                         momentum=opt.momentum,
                         weight_decay=opt.weight_decay)
     
@@ -208,7 +203,7 @@ if __name__ == '__main__':
     start_epoch = 0
 
     if len(opt.weights) == 0:
-        warmup(model, warmup_epoch=5, device=device, opt=opt)
+        warmup(model, optimizer=optimizer, warmup_epoch=5, device=device, opt=opt)
     else:
         checkpoint = torch.load(opt.weights)
         start_epoch = checkpoint['epoch'] + 1
