@@ -6,6 +6,11 @@ I tried to reproduce Darknet based YOLOv3Tiny using PyTorch.
 
 # Performance
 
+I used the ImageNet pretrained backbone network. 
+
+Refer to [this project](https://github.com/developer0hye/PyTorch-ImageNet) to know training rules for training the pretrained the network.
+
+
 |Training Set|Test Set|mAP(mean Average Precision)|Weights|
 |---|---|---|---|
 |VOC 07+12 train/val|VOC 07 test|58.86|[download](https://drive.google.com/file/d/1NMFs2LjipSaFg9tUzll8T-ltOQLGVnT6/view?usp=sharing)|
