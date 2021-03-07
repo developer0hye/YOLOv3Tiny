@@ -1,7 +1,6 @@
 import cv2
 import numpy as np
 import random
-import math
 
 def xywh2xyxy(box_xywh):
     box_xyxy = box_xywh.copy()
