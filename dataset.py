@@ -7,7 +7,6 @@ from pathlib import Path
 import torch
 from torch.utils.data import Dataset
 import torch.nn
-import torchvision.transforms as transforms
 
 import augmentation
 
