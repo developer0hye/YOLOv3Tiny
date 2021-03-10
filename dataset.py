@@ -10,17 +10,24 @@ import torch.nn
 
 import augmentation
 
-def load_dataset(root):
+def read_data(root):
     imgs_path = []
     labels_path = []
 
     for r, d, f in os.walk(root):
         for file in f:
-            if file.lower().endswith((".png", ".jpg", ".bmp")):
-                imgs_path.append(os.path.join(r, file).replace(os.sep, '/'))
-            elif file.lower().endswith(".txt"):
-                labels_path.append(os.path.join(r, file).replace(os.sep, '/'))
-            
+            if file.lower().endswith((".png", ".jpg", ".bmp", ".jpeg")):
+                img_path = os.path.join(r, file).replace(os.sep, '/')
+                label_path = Path(img_path).with_suffix('.txt')
+                
+                if not os.path.isfile(img_path):
+                    continue
+                
+                if not os.path.isfile(label_path):
+                    continue
+                
+                imgs_path.append(img_path)
+                labels_path.append(label_path)
     return imgs_path, labels_path
 
 class YOLODataset(Dataset):
