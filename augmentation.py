@@ -104,7 +104,7 @@ def RandomTranslation(img, bboxes_xyxy, classes, p=1.0):
         l_bboxes = round(width * np.min(bboxes_xyxy[:, 0]))
         r_bboxes = width-round(width * np.max(bboxes_xyxy[:, 2]))
 
-        t_bboxes = round(np.min(height * bboxes_xyxy[:, 1]))
+        t_bboxes = round(height * np.min(bboxes_xyxy[:, 1]))
         b_bboxes = height-round(height * np.max(bboxes_xyxy[:, 3]))
 
         tx = random.randint(-l_bboxes, r_bboxes)
