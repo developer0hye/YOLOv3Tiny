@@ -488,22 +488,6 @@ def yololoss(batch_pred, batch_target, ignore_thresh=0.7):
     loss_objectness = (torch.sum(loss_foreground_objectness)+torch.sum(loss_background_objectness))/batch_size
     loss_class_prob = torch.sum(torch.cat(loss_class_prob))/batch_size
 
-    # print("********")
-    # print(loss_x)
-    # print(loss_y)
-    # print(loss_w)
-    # print(loss_h)
-    # print(loss_objectness)
-    # print(loss_class_prob)
-    # exit()
-
-    # anchor_boxes 수에 따라 background 샘플 수가 많아지고 이에따라 class imbalance 문제 심해짐, 이거를 anchor_boxes수로 나누어서 anchor boxes 수에 어느정도 independent하게끔 loss를 설계
-    # batch_size 도 위와 같은 이유로 나누어줌
-    # 입력 이미지의 Scale 또한 background 샘플 수에 영향을 미치는 factor인데... 이거는 어떻게 고려해주는 게 좋을까...흠... 기준이 될만한 factor가 없네
-    # 뭐랄까... 설명하기 어려움, positive sample들을 target_bboxes수로 나누어주면 batch_size, 이미지내 positive sample 수에 어느정도 independent해지듯이...
-    # negative sample들도 그럼 negative sample 수로 나눠주면 되지 않냐고 생각하게 되는데 실제로 mean 해서 backpropagation 시키면 FP(배경을 물체로 detection) 케이스 수가 기하급수적 증가됨
-    # 학습의 성패는 loss_background_objectness 를 얼마나 잘 컨트롤 해주냐에 따라 갈림
-
     loss = loss_x + loss_y + loss_w + loss_h + loss_objectness + loss_class_prob
     
     return loss
