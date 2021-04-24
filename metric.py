@@ -94,7 +94,7 @@ def measure_tpfp(pred_bboxes, gt_bboxes, iou_threshold=0.5, bbox_format='cxcywh'
 
         filtered_iou_per_box = iou_per_box[pred_mask]
         filtered_tp_per_box = tp_per_box[pred_mask]
-
+        
         iou_matrix = compute_iou(filtered_pred_bboxes[:, 1:5], filtered_gt_bboxes[:, 1:5], bbox_format) # (N, M)
         #for iou in iou_matrix:
         #print("np.sum(iou_matrix): ", np.sum(iou_matrix))
@@ -105,19 +105,33 @@ def measure_tpfp(pred_bboxes, gt_bboxes, iou_threshold=0.5, bbox_format='cxcywh'
 
         for i in range(len(filtered_gt_bboxes)):
             iou = iou_matrix[:, i] # filtered_pred_bboxes와 i번째 filtered_gt_bbox간 IoU
-            sorted_iou_inds = np.argsort(iou)[::-1]
-
-            if iou[sorted_iou_inds[0]] < iou_threshold:
-                continue
-            
-            filtered_iou_per_box[sorted_iou_inds[0]] = iou[sorted_iou_inds[0]]
-            filtered_tp_per_box[sorted_iou_inds[0]] = 1
-
+            matched = False
+            for j in range(len(iou)):
+                if filtered_tp_per_box[j] == 1.: # already matched
+                    continue
+                
+                if iou[j] >= iou_threshold:
+                    if not matched:
+                        matched = True
+                        filtered_iou_per_box[j] = iou[j]
+                        filtered_tp_per_box[j] = 1.
+        
         iou_per_box[pred_mask] = filtered_iou_per_box
         tp_per_box[pred_mask] = filtered_tp_per_box
 
-    assert np.sum(tp_per_box) <= len(gt_bboxes), "Your code is wrong. The number of TP cases cannot exceed the number of ground truth boxes."
     fp_per_box = 1 - tp_per_box
+    
+    # print(pred_bboxes.shape)
+    # print(np.sum(tp_per_box) + np.sum(fp_per_box))
+    
+    
+    assert np.sum(tp_per_box) <= len(gt_bboxes), "Your code is wrong. The number of TP cases cannot exceed the number of ground truth boxes."
+    assert np.sum(tp_per_box) + np.sum(fp_per_box) <= len(pred_bboxes), "Your code is wrong"
+
+    # print(gt_bboxes)
+    # print(fp_per_box)
+    # print("--------------------")
+    # exit()
     class_tp_fp_score = np.concatenate((pred_bboxes[:, 0, None], 
                                         tp_per_box, 
                                         fp_per_box, 
@@ -128,7 +142,6 @@ def measure_tpfp(pred_bboxes, gt_bboxes, iou_threshold=0.5, bbox_format='cxcywh'
 
     class_tp_fp_score = class_tp_fp_score[sorted_inds_by_score]
     return class_tp_fp_score
-
 def compute_ap(tp_fp_score, gt_bboxes):
     tp_fp_score = tp_fp_score[np.argsort(tp_fp_score[:, -1])[::-1]]
     num_all_gt_bboxes = len(gt_bboxes)
